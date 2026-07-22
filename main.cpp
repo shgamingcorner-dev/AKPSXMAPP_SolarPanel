@@ -72,7 +72,7 @@ DHT11 dht11(DHT11_PIN);
 
 #define TS_HOST  "api.thingspeak.com"
 #define TS_PORT  80
-#define BUF      512
+#define BUF      256
 
 static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
 static char g_tx[BUF];
@@ -482,7 +482,9 @@ static void network_task(void)
 //  MAIN — owns RFID polling + LEDs only
 
 
-static Thread networkThread;
+// Explicit (smaller than default 4KB) stack — this board only has 20KB
+// total RAM and was hitting 100% usage with the default thread stack size.
+static Thread networkThread(osPriorityNormal, 2048);
 
 
 int main(void)
