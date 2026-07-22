@@ -21,8 +21,8 @@ MFRC522::MIFARE_Key key;
 // ROTATE THESE BEFORE COMMITTING — the previous values were committed to a
 // public repo in plaintext. Put your NEW WiFi password here after changing
 // it on your router, and never reuse a value that was ever pushed to git.
-#define WIFI_SSID        "fight random people for Wifi"
-#define WIFI_PASSWORD    "REPLACE_WITH_NEW_WIFI_PASSWORD"
+#define WIFI_SSID        "SINGTEL-DFT4"
+#define WIFI_PASSWORD    "3rx3cfm2hb"
 #define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
 #define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
 
@@ -34,7 +34,7 @@ MFRC522::MIFARE_Key key;
 //  through it; it is NOT the bot token. Get a new bot token from @BotFather
 //  if the old one leaked (/revoke), and set it as TELEGRAM_BOT_TOKEN on the
 //  relay's Replit Secrets — not here.
-#define RELAY_HOST    "your-repl-name.yourusername.repl.co"  // no https://, no trailing slash
+#define RELAY_HOST    "https://akpsrelay--shgamingcorner.replit.app"  // no https://, no trailing slash
 #define RELAY_PORT    80
 #define RELAY_SECRET  "ab805d0429869cfc507b54bd1921a2ae"     // must match RELAY_SECRET on the relay
 
