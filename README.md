@@ -1,10 +1,8 @@
 ![](./resources/official_armmbed_example_badge.png)
-# Blinky Mbed OS example
+# AKPS Solar Panel
+Made by Song Heng, Sean, Quan Biao, Ashton, Louis
 
-The example project is part of the [Arm Mbed OS Official Examples](https://os.mbed.com/code/) and is the [getting started example for Mbed OS](https://os.mbed.com/docs/mbed-os/latest/quick-start/index.html). It contains an application that repeatedly blinks an LED on supported [Mbed boards](https://os.mbed.com/platforms/).
 
-You can build the project with all supported [Mbed OS build tools](https://os.mbed.com/docs/mbed-os/latest/tools/index.html). However, this example project specifically refers to the command-line interface tool [Arm Mbed CLI](https://github.com/ARMmbed/mbed-cli#installing-mbed-cli).
-(Note: To see a rendered example you can import into the Arm Online Compiler, please see our [import quick start](https://os.mbed.com/docs/mbed-os/latest/quick-start/online-with-the-online-compiler.html#importing-the-code).)
 
 ## Mbed OS build tools
 
@@ -21,41 +19,28 @@ Starting with version 6.5, Mbed OS uses Mbed CLI 2. It uses Ninja as a build sys
 
 ## Application functionality
 
-The `main()` function is the single thread in the application. It toggles the state of a digital output connected to an LED on the board.
+The `main()` function is one of the two threads. It currently only runs the RFID checker
 
-**Note**: This example requires a target with RTOS support, i.e. one with `rtos` declared in `supported_application_profiles` in `targets/targets.json` in [mbed-os](https://github.com/ARMmbed/mbed-os). For non-RTOS targets (usually with small memory sizes), please use [mbed-os-example-blinky-baremetal](https://github.com/ARMmbed/mbed-os-example-blinky-baremetal) instead.
+The other thread is called network_task(). This one currently runs the code required for ESP-01 to upload the data to thinkspeak
+
 
 ## Building and running
 
 1. Connect a USB cable between the USB port on the board and the host computer.
-1. Run the following command to build the example project and program the microcontroller flash memory:
+2. Just use Keil Studio Cloud with the BIN file and build it on the board. Then just run it.
 
-    * Mbed CLI 2
-
-    ```bash
-    $ mbed-tools compile -m <TARGET> -t <TOOLCHAIN> --flash
-    ```
-
-    * Mbed CLI 1
-
-    ```bash
-    $ mbed compile -m <TARGET> -t <TOOLCHAIN> --flash
-    ```
 
 Your PC may take a few minutes to compile your code.
-
-The binary is located at:
-* **Mbed CLI 2** - `./cmake_build/mbed-os-example-blinky.bin`</br>
-* **Mbed CLI 1** - `./BUILD/<TARGET>/<TOOLCHAIN>/mbed-os-example-blinky.bin`
 
 Alternatively, you can manually copy the binary to the board, which you mount on the host computer over USB.
 
 ## Expected output
-The LED on your target turns on and off every 500 milliseconds.
+The LED will be red if there is no RFID in range
+Data will be uploaded to said thinkspeak
 
 
 ## Troubleshooting
-If you have problems, you can review the [documentation](https://os.mbed.com/docs/latest/tutorials/debugging.html) for suggestions on what could be wrong and how to fix it.
+Text me or its just skill issue idk
 
 ## Related Links
 
