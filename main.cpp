@@ -373,7 +373,11 @@ static bool send_telegram_via_relay(const char *message)
     esp_send(query);
     esp_read(5000);
 
-    if (strstr(g_rx, "\"ok\":true") || strstr(g_rx, "\"ok\": true")) {
+    // Check the HTTP status line, not the JSON body -- the relay's success
+    // body can be longer than this buffer, so searching for "ok":true deep
+    // in the body gives false negatives on truncated reads. The relay
+    // itself only returns 200 when Telegram's send actually succeeded.
+    if (strstr(g_rx, "200 OK")) {
         printf("[TG] Message sent OK\n");
     } else {
         printf("[TG] Unexpected response — check relay logs / RELAY_SECRET\n");
