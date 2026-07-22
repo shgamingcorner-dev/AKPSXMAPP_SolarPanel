@@ -18,16 +18,25 @@ MFRC522::MIFARE_Key key;
 //  api keys/wifi information
 
 
+// ROTATE THESE BEFORE COMMITTING — the previous values were committed to a
+// public repo in plaintext. Put your NEW WiFi password here after changing
+// it on your router, and never reuse a value that was ever pushed to git.
 #define WIFI_SSID        "fight random people for Wifi"
-#define WIFI_PASSWORD    "Hellothere"
+#define WIFI_PASSWORD    "REPLACE_WITH_NEW_WIFI_PASSWORD"
 #define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
 #define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
 
-//  Telegram config — get these from @BotFather (token) and @userinfobot (chat id)
-#define TG_BOT_TOKEN  "8633588387:AAEwVrnV4XjuI_ci0qixaD0-5M8kXMN1zec" //TOKEN
-#define TG_CHAT_ID    "5632482945" //CHATID
-#define TG_HOST       "api.telegram.org"
-#define TG_PORT       443
+//  Telegram-via-relay config
+//  The bot token lives ONLY on the relay server (as a Replit Secret) now —
+//  the firmware never sees it, so there's nothing Telegram-related left to
+//  leak from this file. RELAY_SECRET is just a shared password between this
+//  board and the relay so randoms on the internet can't POST messages
+//  through it; it is NOT the bot token. Get a new bot token from @BotFather
+//  if the old one leaked (/revoke), and set it as TELEGRAM_BOT_TOKEN on the
+//  relay's Replit Secrets — not here.
+#define RELAY_HOST    "your-repl-name.yourusername.repl.co"  // no https://, no trailing slash
+#define RELAY_PORT    80
+#define RELAY_SECRET  "ab805d0429869cfc507b54bd1921a2ae"     // must match RELAY_SECRET on the relay
 
 // ThingSpeak field assignment 
 #define TS_FIELD_TEMPERATURE   1
@@ -322,6 +331,59 @@ static bool send_to_thingspeak(void)
 }
 
 // ============================================================
+//  TELEGRAM SENDER (via the HTTPS relay, since the ESP-01's AT
+//  firmware can only do plain HTTP and Telegram requires TLS)
+// ============================================================
+
+static bool send_telegram_via_relay(const char *message)
+{
+    // Connection id 1 — id 0 is used by send_to_thingspeak()
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=1,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
+    at(g_tx, 5000);
+    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+        printf("[TG] TCP open failed\n");
+        return false;
+    }
+
+    char encoded_text[128];
+    urlencode(encoded_text, sizeof(encoded_text), message);
+
+    char query[BUF];
+    snprintf(query, sizeof(query),
+        "GET /telegram?text=%s&secret=%s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Connection: close\r\n\r\n",
+        encoded_text, RELAY_SECRET, RELAY_HOST);
+
+    int req_len = strlen(query);
+
+    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=1,%d\r\n", req_len);
+    at(g_tx, 2000);
+    if (!strstr(g_rx, ">")) {
+        esp_read(1000);
+        if (!strstr(g_rx, ">")) {
+            printf("[TG] No > prompt\n");
+            at("AT+CIPCLOSE=1\r\n", 1000);
+            return false;
+        }
+    }
+
+    printf("[TG] Sending: %s\n", query);
+    esp_send(query);
+    esp_read(5000);
+
+    if (strstr(g_rx, "\"ok\":true") || strstr(g_rx, "\"ok\": true")) {
+        printf("[TG] Message sent OK\n");
+    } else {
+        printf("[TG] Unexpected response — check relay logs / RELAY_SECRET\n");
+    }
+
+    at("AT+CIPCLOSE=1\r\n", 2000);
+    return true;
+}
+
+// ============================================================
 //  ESP-01 INIT
 // ============================================================
 
@@ -375,6 +437,16 @@ static void network_task(void)
 
     while (1) {
         uint64_t now = Kernel::get_ms_count();
+
+        // ---- Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS ----
+        int rfid_now = get_latest_rfid();
+        if (rfid_now != 0 && now - last_tg_send >= TG_COOLDOWN_MS) {
+            last_tg_send = now;
+            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!";
+            if (!send_telegram_via_relay(msg)) {
+                printf("[WARN] Telegram send failed\n");
+            }
+        }
 
         // ---- ThingSpeak: unchanged, runs every SEND_INTERVAL_MS ----
         if (now - last_send >= SEND_INTERVAL_MS) {
