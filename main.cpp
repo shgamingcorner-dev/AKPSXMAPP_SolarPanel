@@ -34,7 +34,7 @@ MFRC522::MIFARE_Key key;
 //  through it; it is NOT the bot token. Get a new bot token from @BotFather
 //  if the old one leaked (/revoke), and set it as TELEGRAM_BOT_TOKEN on the
 //  relay's Replit Secrets — not here.
-#define RELAY_HOST    "https://akpsrelay--shgamingcorner.replit.app"  // no https://, no trailing slash
+#define RELAY_HOST    "akpsrelay--shgamingcorner.replit.app"  // no https://, no trailing slash
 #define RELAY_PORT    80
 #define RELAY_SECRET  "ab805d0429869cfc507b54bd1921a2ae"     // must match RELAY_SECRET on the relay
 
