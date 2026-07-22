@@ -21,8 +21,8 @@ MFRC522::MIFARE_Key key;
 // ROTATE THESE BEFORE COMMITTING — the previous values were committed to a
 // public repo in plaintext. Put your NEW WiFi password here after changing
 // it on your router, and never reuse a value that was ever pushed to git.
-#define WIFI_SSID        "SINGTEL-2TKY"
-#define WIFI_PASSWORD    "3rx3cfm2hb"
+#define WIFI_SSID        "OPPO A16"
+#define WIFI_PASSWORD    "400121Lim"
 #define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
 #define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
 
