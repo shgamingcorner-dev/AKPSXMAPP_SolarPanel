@@ -411,6 +411,26 @@ static void esp_init(void)
     printf("=== ESP-01 ready ===\n");
 }
 
+// Rejoins WiFi after the AP drops the connection mid-session (AT+CWJAP
+// doesn't auto-retry). CIPMUX stays set across a CWJAP-only rejoin, so it
+// doesn't need to be resent.
+static void wifi_reconnect(void)
+{
+    printf("[WIFI] Reconnecting...\n");
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
+    esp_send(g_tx);
+    esp_read(12000);
+
+    if (strstr(g_rx, "GOT IP")) {
+        wifi_connected = true;
+        printf("[WIFI] Reconnected!\n");
+    } else {
+        wifi_connected = false;
+        printf("[WIFI] Reconnect failed, will retry\n");
+    }
+}
+
 // ============================================================
 //  NETWORK TASK  — runs entirely on its own Thread
 //
@@ -435,6 +455,12 @@ static void network_task(void)
     uint64_t last_tg_send = 0;
     const uint64_t TG_COOLDOWN_MS = 5000; // 5 sec for testing — raise back to 60000 later
 
+    // If the AP drops the connection mid-session, every AT+CIPSTART just
+    // fails with "no ip" forever since AT+CWJAP never auto-retries. Track
+    // consecutive failures and force a rejoin once it looks like WiFi died.
+    int consecutive_failures = 0;
+    const int MAX_CONSECUTIVE_FAILURES = 3;
+
     while (1) {
         uint64_t now = Kernel::get_ms_count();
 
@@ -443,8 +469,11 @@ static void network_task(void)
         if (rfid_now != 0 && now - last_tg_send >= TG_COOLDOWN_MS) {
             last_tg_send = now;
             const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!";
-            if (!send_telegram_via_relay(msg)) {
+            if (send_telegram_via_relay(msg)) {
+                consecutive_failures = 0;
+            } else {
                 printf("[WARN] Telegram send failed\n");
+                consecutive_failures++;
             }
         }
 
@@ -469,9 +498,17 @@ static void network_task(void)
                        ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
             }
 
-            if (!send_to_thingspeak()) {
+            if (send_to_thingspeak()) {
+                consecutive_failures = 0;
+            } else {
                 printf("[WARN] Send failed, retrying next cycle\n");
+                consecutive_failures++;
             }
+        }
+
+        if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
+            consecutive_failures = 0;
+            wifi_reconnect();
         }
 
         thread_sleep_for(50);   // network task doesn't need a tight loop
