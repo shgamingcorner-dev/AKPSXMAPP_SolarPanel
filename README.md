@@ -1,4 +1,3 @@
-![](./resources/official_armmbed_example_badge.png)
 # AKPS Solar Panel
 Made by Song Heng, Sean, Quan Biao, Ashton, Louis
 
