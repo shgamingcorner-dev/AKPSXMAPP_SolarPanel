@@ -18,9 +18,79 @@ Starting with version 6.5, Mbed OS uses Mbed CLI 2. It uses Ninja as a build sys
 
 ## Application functionality
 
-The `main()` function is one of the two threads. It currently only runs the RFID checker
+The `main()` function is one of the two threads. It currently only runs the RFID checker.
 
-The other thread is called network_task(). This one currently runs the code required for ESP-01 to upload the data to thinkspeak
+The other thread is called `network_task()`. It owns everything network-related: joining WiFi
+via the ESP-01, uploading sensor readings to ThingSpeak, and relaying Telegram alerts + Supabase
+telemetry/alerts through the [AKPSRELAY](https://github.com/shgamingcorner-dev/AKPSRELAY) Flask
+bridge (see "Architecture" below for why a relay exists at all).
+
+## Architecture
+
+```
+STM32 (this repo) --HTTP (plain)--> AKPSRELAY (PythonAnywhere) --HTTPS--> Telegram / Supabase
+                    \-HTTP (plain)-> ThingSpeak (accepts plain HTTP directly)
+```
+
+The ESP-01's AT firmware can only speak plain HTTP, not HTTPS/TLS. ThingSpeak accepts plain HTTP
+so the board talks to it directly. Telegram and Supabase both require HTTPS, so a small Flask
+relay ([AKPSRELAY](https://github.com/shgamingcorner-dev/AKPSRELAY), deployed on PythonAnywhere at
+`shgam.pythonanywhere.com`) sits in the middle: the board POSTs plain HTTP to the relay, and the
+relay forwards over HTTPS. The relay also holds the Telegram bot token and Supabase service key
+server-side — the firmware only ever sees a shared `RELAY_SECRET`, never the real credentials.
+
+Note: we tried hosting the relay on Replit first, but Replit's Autoscale deployments (Cloud
+Run-backed) force HTTPS at the network edge and redirect any plain HTTP request — confirmed with
+a direct `curl` test getting a 301 back. Since the ESP-01 can't follow a redirect to HTTPS, Replit
+can't host this relay. PythonAnywhere's free tier serves plain HTTP with no forced redirect, which
+is why it's the current host.
+
+## What has been done
+
+- **WiFi**: joins the configured AP (`WIFI_SSID`/`WIFI_PASSWORD` near the top of `main.cpp`), with
+  auto-reconnect logic that rejoins after 3 consecutive send failures (handles the AP dropping the
+  connection mid-session, since `AT+CWJAP` never auto-retries on its own).
+- **RFID**: reads card/tag UID via the MFRC522, matches against `RFID_UID_CARD`/`RFID_UID_TAG`.
+- **ThingSpeak**: uploads temperature, humidity, current (placeholder), and RFID state every
+  `SEND_INTERVAL_MS` (15s).
+- **Telegram alerts**: fires on RFID scan via the relay's `/telegram` route, rate-limited by
+  `TG_COOLDOWN_MS`.
+- **Supabase bridge**: sensor readings and RFID alerts are also pushed to Supabase
+  (`sensor_telemetry` / `alert_logs` tables) via the relay's `/sensor-telemetry` and `/alert-log`
+  routes, so the [FRONTENDAKPS](https://github.com/shgamingcorner-dev/FRONTENDAKPS) dashboard can
+  display real hardware data instead of its mock simulation. Both routes dedupe on a `seq` counter
+  (upsert with `on_conflict=seq` + `ignore-duplicates`) so a retried request after an AT-command
+  timeout doesn't create a duplicate row.
+- **Stability fixes**: RAM usage trimmed (smaller shared buffers, explicit thread stack size),
+  and the Telegram response check now looks at the HTTP status line instead of searching for
+  `"ok":true` in the JSON body, since the 256-byte read buffer can truncate the body before that
+  substring appears.
+
+## What is still to be done
+
+- **Real current/power sensor.** `read_current()` currently returns a hardcoded `226.0f` — there's
+  no actual current sensor wired up yet.
+- **Act on `/device-state`.** The relay already exposes a `GET /device-state` route that returns
+  the dashboard's `main_lighting` toggle from Supabase, but the firmware doesn't poll it or drive
+  any actuator from it yet. The `DeviceState` type in the frontend also has `gateServo`, `hvacPower`,
+  `smartLock`, and `securityArmState` — none of these have a corresponding actuator or relay route
+  on the hardware side yet.
+- **WiFi instability under load.** Serial logs show `WIFI DISCONNECT` happening frequently, often
+  right around an RFID scan — most likely the ESP-01 and MFRC522 briefly drawing current spikes at
+  the same time and browning out a shared, under-rated power supply. The auto-reconnect logic
+  papers over this but doesn't fix the root cause. Needs: a dedicated 5V supply (1-2A) feeding the
+  ESP-01 adapter and RFID reader directly (not through the Nucleo's onboard 3.3V/5V pins), a bulk
+  capacitor (100-470µF) near the ESP-01's power input, and a common ground across everything.
+- **`TG_COOLDOWN_MS` is set to 5000 (5s) for testing** — comment in the code notes it should be
+  raised back to a production value (e.g. 60000) before real deployment, so a card left near the
+  reader doesn't spam Telegram/Supabase every 5 seconds.
+- **`seq` counter resets to 0 on every reboot.** The dedup logic is only safe against retries
+  within a single power-on session, not across reboots. Not currently a problem since it's a
+  monotonic counter and Supabase's unique index just rejects the eventual re-collision, but worth
+  knowing about.
+- **Credentials are still committed in plaintext** (`WIFI_PASSWORD`, `RELAY_SECRET`) since this is
+  a public repo shared with hardware that has no secret storage. Rotate `RELAY_SECRET` if it ever
+  needs to change, and don't reuse a WiFi password here that matters elsewhere.
 
 
 ## Building and running
