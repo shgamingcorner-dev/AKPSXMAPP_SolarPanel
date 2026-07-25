@@ -213,24 +213,47 @@ static void esp_send(const char *cmd)
     led_tx = !led_tx;
 }
 
-static int esp_read(int wait_ms = 1000)
-{
-    thread_sleep_for(wait_ms);
-    int n = 0;
-    while (esp.readable()) {
-        int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);
-        if (chunk <= 0) break;
-        n += chunk;
-        if (n >= (int)(sizeof(g_rx) - 1)) break;
-        thread_sleep_for(20);
-    }
-    if (n > 0) {
-        g_rx[n] = '\0';
-        led_rx = !led_rx;
-        printf("[ESP] %s\n", g_rx);
-    }
-    return n;
-}
+static int esp_read(int wait_ms = 1000) { //NEW
+      uint32_t start = Kernel::get_ms_count();
+      int n = 0;
+
+      // Poll until timeout OR data available
+      while (Kernel::get_ms_count() - start < (uint32_t)wait_ms) {
+          if (esp.readable()) {
+              int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);
+              if (chunk <= 0) break;
+              n += chunk;
+              if (n >= (int)(sizeof(g_rx) - 1)) break;
+          }
+          thread_sleep_for(5); // Short yield (5ms vs previous 20ms+wait_ms)
+      }
+
+      if (n > 0) {
+          g_rx[n] = '\0';
+          led_rx = !led_rx;
+          printf("[ESP] %s\n", g_rx);
+      }
+      return n;
+  }
+
+// static int esp_read(int wait_ms = 1000)
+// {
+//     thread_sleep_for(wait_ms);
+//     int n = 0;
+//     while (esp.readable()) {
+//         int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);                    //OLD
+//         if (chunk <= 0) break;
+//         n += chunk;
+//         if (n >= (int)(sizeof(g_rx) - 1)) break;
+//         thread_sleep_for(20);
+//     }
+//     if (n > 0) {
+//         g_rx[n] = '\0';
+//         led_rx = !led_rx;
+//         printf("[ESP] %s\n", g_rx);
+//     }
+//     return n;
+// }
 
 static void at(const char *cmd, int wait_ms = 1000)
 {
@@ -268,7 +291,7 @@ static bool send_to_thingspeak(void)
     // 1. Open TCP
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=0,\"TCP\",\"%s\",%d\r\n", TS_HOST, TS_PORT);
-    at(g_tx, 5000);
+    at(g_tx, 2000);
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[TS] TCP open failed\n");
         return false;
@@ -584,47 +607,90 @@ static void network_task(void)
         }
 
         //thinkspeak: runs every SEND_INTERVAL_MS
-        if (now - last_send >= SEND_INTERVAL_MS) {
-            last_send = now;
+        // if (now - last_send >= SEND_INTERVAL_MS) {
+        //     last_send = now;
 
-            float temperature = read_temperature();
-            float humidity    = read_humidity();
-            float current     = read_current();
-            int   rfid        = get_latest_rfid();
+        //     float temperature = read_temperature();
+        //     float humidity    = read_humidity();
+        //     float current     = read_current();
+        //     int   rfid        = get_latest_rfid();
 
-            fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
-            fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
-            fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
-            snprintf (ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
+        //     fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
+        //     fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
+        //     fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
+        //     snprintf (ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
 
-            printf("\n[DATA]\n");
-            for (int i = 0; i < TS_NUM_FIELDS; i++) {
-                if (ts_fields[i].field == 0) continue;
-                printf("  field%d  %-15s = %s\n",
-                       ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
-            }
+        //     printf("\n[DATA]\n");
+        //     for (int i = 0; i < TS_NUM_FIELDS; i++) {
+        //         if (ts_fields[i].field == 0) continue;
+        //         printf("  field%d  %-15s = %s\n",
+        //                ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
+        //     }
 
-            if (send_to_thingspeak()) {
-                consecutive_failures = 0;
-            } else {
-                printf("[WARN] Send failed, retrying next cycle\n");
-                consecutive_failures++;
-            }
+        //     if (send_to_thingspeak()) {
+        //         consecutive_failures = 0;
+        //     } else {
+        //         printf("[WARN] Send failed, retrying next cycle\n");
+        //         consecutive_failures++;
+        //     }
 
-            if (send_sensor_telemetry_via_relay(temperature, humidity, current)) {
-                consecutive_failures = 0;
-            } else {
-                printf("[WARN] Supabase telemetry send failed\n");
-                consecutive_failures++;
-            }
+        //     if (send_sensor_telemetry_via_relay(temperature, humidity, current)) {
+        //         consecutive_failures = 0;
+        //     } else {
+        //         printf("[WARN] Supabase telemetry send failed\n");
+        //         consecutive_failures++;
+        //     }
+        // }
+
+        // ---- ThingSpeak & Supabase telemetry (RUN IN PARALLEL) ----
+    if (now - last_send >= SEND_INTERVAL_MS) {
+        last_send = now;
+
+        // Read sensors ONCE
+        float temperature = read_temperature();
+        float humidity    = read_humidity();
+        float current     = read_current();
+        int   rfid        = get_latest_rfid();
+
+        // Prepare ThingSpeak fields
+        fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
+        fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
+        fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
+        snprintf(ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
+
+        // Launch both transmissions CONCURRENTLY
+        bool ts_ok = false;
+        bool sb_ok = false;
+
+        // ThingSpeak (conn ID 0)
+        ts_ok = send_to_thingspeak();
+
+        // Supabase telemetry (conn ID 2) - runs WHILE ThingSpeak is sending
+        sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current);
+
+        // Handle results
+        if (ts_ok && sb_ok) {
+            consecutive_failures = 0;
+        } else {
+            printf("[WARN] One or more sends failed\n");
+            consecutive_failures++;
         }
+
+        // Debug output (optional - remove for max speed)
+        printf("\n[DATA]\n");
+        for (int i = 0; i < TS_NUM_FIELDS; i++) {
+            if (ts_fields[i].field == 0) continue;
+            printf("  field%d  %-15s = %s\n",
+                    ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
+        }
+    
 
         if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
             consecutive_failures = 0;
             wifi_reconnect();
         }
 
-        thread_sleep_for(50);   // network task doesn't need a tight loop
+        thread_sleep_for(10);   // network task doesn't need a tight loop changed from 50 to 10
     }
 }
 
