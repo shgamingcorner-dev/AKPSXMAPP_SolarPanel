@@ -8,9 +8,6 @@
 #include <ctype.h>
 #include "DHT11.h"
 
-MFRC522             mfrc522(SS_PIN, RST_PIN);
-MFRC522::MIFARE_Key key;
-
 //api keys and wifi credentials — change these to your own before compiling
 #define WIFI_SSID        "SINGTEL-2TKY"
 #define WIFI_PASSWORD    "3rx3cfm2hb"
@@ -33,18 +30,15 @@ MFRC522::MIFARE_Key key;
 #define RFID_UID_CARD  "15828045"
 #define RFID_UID_TAG   "E09F8E21"
 
-
 //  HARDWARE PINS
-
 #define RST_PIN PA_2
 #define SS_PIN  PB_2
-
-MFRC522             mfrc522(SS_PIN, RST_PIN);
-MFRC522::MIFARE_Key key;
-
 #define ESP_TX  PC_10
 #define ESP_RX  PC_11
 #define DHT11_PIN PA_1
+
+MFRC522             mfrc522(SS_PIN, RST_PIN);
+MFRC522::MIFARE_Key key;
 
 static DigitalOut led_tx(PB_14);
 static DigitalOut led_rx(PB_15);
@@ -273,7 +267,7 @@ static void urlencode(char *dst, int dst_sz, const char *src)
         if (isalnum(c) || c=='-' || c=='_' || c=='.' || c=='~') {
             dst[j++] = c;
         } else if (c == ' ') {
-            j++;
+            dst[j++] = '+';
         } else {
             snprintf(dst + j, 4, "%%%02X", c);
             j += 3;
@@ -408,7 +402,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
 {
     char temp_s[16], hum_s[16], pow_s[16];
     fmt_float(temp_s, sizeof(temp_s), temperature);
-    fmt_float(hum_s,  sizeof(hum_s),  humidity); // Fixed: was float_float
+    fmt_float(hum_s,  sizeof(hum_s),  humidity);
     fmt_float(pow_s,  sizeof(pow_s),  power);
 
     char body[BUF];
@@ -611,54 +605,55 @@ static void network_task(void)
         }
 
         // ---- ThingSpeak & Supabase telemetry (RUN IN PARALLEL) ----
-    if (now - last_send >= SEND_INTERVAL_MS) {
-        last_send = now;
+        if (now - last_send >= SEND_INTERVAL_MS) {
+            last_send = now;
 
-        // Read sensors ONCE
-        float temperature = read_temperature();
-        float humidity    = read_humidity();
-        float current     = read_current();
-        int   rfid        = get_latest_rfid();
+            // Read sensors ONCE
+            float temperature = read_temperature();
+            float humidity    = read_humidity();
+            float current     = read_current();
+            int   rfid        = get_latest_rfid();
 
-        // Prepare ThingSpeak fields
-        fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
-        fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
-        fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
-        snprintf(ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
+            // Prepare ThingSpeak fields
+            fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
+            fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
+            fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
+            snprintf(ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
 
-        // Launch both transmissions CONCURRENTLY
-        bool ts_ok = false;
-        bool sb_ok = false;
+            // Launch both transmissions CONCURRENTLY
+            bool ts_ok = false;
+            bool sb_ok = false;
 
-        // ThingSpeak (conn ID 0)
-        ts_ok = send_to_thingspeak();
+            // ThingSpeak (conn ID 0)
+            ts_ok = send_to_thingspeak();
 
-        // Supabase telemetry (conn ID 2) - runs WHILE ThingSpeak is sending
-        sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current);
+            // Supabase telemetry (conn ID 2) - runs WHILE ThingSpeak is sending
+            sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current);
 
-        // Handle results
-        if (ts_ok && sb_ok) {
-            consecutive_failures = 0;
-        } else {
-            printf("[WARN] One or more sends failed\n");
-            consecutive_failures++;
+            // Handle results
+            if (ts_ok && sb_ok) {
+                consecutive_failures = 0;
+            } else {
+                printf("[WARN] One or more sends failed\n");
+                consecutive_failures++;
+            }
+
+            // Debug output (optional - remove for max speed)
+            printf("\n[DATA]\n");
+            for (int i = 0; i < TS_NUM_FIELDS; i++) {
+                if (ts_fields[i].field == 0) continue;
+                printf("  field%d  %-15s = %s\n",
+                        ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
+            }
+
+
+            if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
+                consecutive_failures = 0;
+                wifi_reconnect();
+            }
+
+            thread_sleep_for(10);   // network task doesn't need a tight loop changed from 50 to 10
         }
-
-        // Debug output (optional - remove for max speed)
-        printf("\n[DATA]\n");
-        for (int i = 0; i < TS_NUM_FIELDS; i++) {
-            if (ts_fields[i].field == 0) continue;
-            printf("  field%d  %-15s = %s\n",
-                    ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
-        }
-
-
-        if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
-            consecutive_failures = 0;
-            wifi_reconnect();
-        }
-
-        thread_sleep_for(10);   // network task doesn't need a tight loop changed from 50 to 10
     }
 }
 
