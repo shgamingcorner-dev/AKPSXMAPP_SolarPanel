@@ -48,7 +48,7 @@ static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 
 // Command Center Phase 1 -- mainLighting toggle from the dashboard
-#define MAIN_LIGHT_PIN PX_X   // TODO: set to the actual pin your spare LED is wired to
+#define MAIN_LIGHT_PIN PC_4   // TODO: set to the actual pin your spare LED is wired to
 static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 
 
