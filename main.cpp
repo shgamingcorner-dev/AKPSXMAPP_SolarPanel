@@ -45,7 +45,7 @@ static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
 static DigitalOut led_Red(PC_2);
 static DigitalOut led_Green(PC_1);
-static DigitalOut DHT11VCC(PA_7);
+static DigitalOut DHT11VCC(PB_0);
 
 
 DHT11 dht11(DHT11_PIN);
