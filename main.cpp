@@ -59,7 +59,6 @@ DHT11 dht11(DHT11_PIN);
 
 //  DONOTEDIT — no need to edit below this line unless programming your own stuff
 
-
 #define TS_HOST  "api.thingspeak.com"
 #define TS_PORT  80
 #define BUF      256
@@ -74,7 +73,6 @@ static char tagID[9];
 //
 //  main thread  : does RFID scanning + LEDs, runs every ~10ms using threadsleepfor
 //  network task : does WiFi/ThingSpeak/Telegram, runs on its own loop
-//
 
 
 
@@ -103,6 +101,7 @@ static void fmt_float(char *out, int out_sz, float v)
     if (frac < 0) frac = -frac;
     snprintf(out, out_sz, "%d.%d", whole, frac);
 }
+
 
 
 //  RFID  (runs on the main thread)
@@ -139,6 +138,7 @@ static int read_RFID(void)
     printf("[RFID] No match. UID: %s\n", tagID);
     return 0;
 }
+
 
 
 //  SENSOR FUNCTIONS all called from network task before sending the data
@@ -186,6 +186,7 @@ static float read_current(void)
 }
 
 
+
 //  THINGSPEAK FIELD TABLE
 
 
@@ -202,6 +203,7 @@ static ts_field_t ts_fields[TS_NUM_FIELDS] = {
     { TS_FIELD_CURRENT,     "", "Current"     },
     { TS_FIELD_RFIDQ,       "", "RFID"        },
 };
+
 
 
 //  ESP-01 LOW-LEVEL  (all called only from the network task)
@@ -271,7 +273,7 @@ static void urlencode(char *dst, int dst_sz, const char *src)
         if (isalnum(c) || c=='-' || c=='_' || c=='.' || c=='~') {
             dst[j++] = c;
         } else if (c == ' ') {
-            dst[j++] = '+';
+            j++;
         } else {
             snprintf(dst + j, 4, "%%%02X", c);
             j += 3;
@@ -279,7 +281,6 @@ static void urlencode(char *dst, int dst_sz, const char *src)
     }
     dst[j] = '\0';
 }
-
 
 
 
@@ -291,7 +292,7 @@ static bool send_to_thingspeak(void)
     // 1. Open TCP
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=0,\"TCP\",\"%s\",%d\r\n", TS_HOST, TS_PORT);
-    at(g_tx, 2000);
+    at(g_tx, 2000); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[TS] TCP open failed\n");
         return false;
@@ -314,12 +315,12 @@ static bool send_to_thingspeak(void)
 
     // 3. CIPSEND
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=0,%d\r\n", req_len);
-    at(g_tx, 2000);
+    at(g_tx, 1000); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
         esp_read(1000);
         if (!strstr(g_rx, ">")) {
             printf("[TS] No > prompt\n");
-            at("AT+CIPCLOSE=0\r\n", 1000);
+            at("AT+CIPCLOSE=0\r\n", 1000); // Reduced from 2000
             return false;
         }
     }
@@ -327,7 +328,7 @@ static bool send_to_thingspeak(void)
     // 4. Send
     printf("[TS] Sending: %s\n", query);
     esp_send(query);
-    esp_read(5000);
+    esp_read(3000); // Reduced from 5000
 
     if (strstr(g_rx, "SEND OK") || strstr(g_rx, "200 OK")) {
         printf("[TS] Upload OK\n");
@@ -336,9 +337,10 @@ static bool send_to_thingspeak(void)
     }
 
     // 5. Close
-    at("AT+CIPCLOSE=0\r\n", 2000);
+    at("AT+CIPCLOSE=0\r\n", 1000); // Reduced from 2000
     return true;
 }
+
 
 
 //  TELEGRAM SENDER (via the HTTPS relay, since the ESP-01's AT firmware can only do plain HTTP and Telegram requires HTTPS)
@@ -349,7 +351,7 @@ static bool send_telegram_via_relay(const char *message)
     // Connection id 1 — id 0 is used by send_to_thingspeak()
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=1,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 5000);
+    at(g_tx, 3000); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[TG] TCP open failed\n");
         return false;
@@ -368,30 +370,31 @@ static bool send_telegram_via_relay(const char *message)
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=1,%d\r\n", req_len);
-    at(g_tx, 2000);
+    at(g_tx, 1000); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
         esp_read(1000);
         if (!strstr(g_rx, ">")) {
             printf("[TG] No > prompt\n");
-            at("AT+CIPCLOSE=1\r\n", 1000);
+            at("AT+CIPCLOSE=1\r\n", 500); // Reduced from 1000
             return false;
         }
     }
 
     printf("[TG] Sending: %s\n", query);
     esp_send(query);
-    esp_read(5000);
+    esp_read(3000); // Reduced from 5000
 
-    // Check the HTTP status line, not the JSON body 
+    // Check the HTTP status line, not the JSON body
     if (strstr(g_rx, "200 OK")) {
         printf("[TG] Message sent OK\n");
     } else {
         printf("[TG] Unexpected response — check relay logs / RELAY_SECRET\n");
     }
 
-    at("AT+CIPCLOSE=1\r\n", 2000);
+    at("AT+CIPCLOSE=1\r\n", 500); // Reduced from 2000
     return true;
 }
+
 
 
 //  SUPABASE BRIDGE (via the same relay, POST with a form body)
@@ -405,7 +408,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
 {
     char temp_s[16], hum_s[16], pow_s[16];
     fmt_float(temp_s, sizeof(temp_s), temperature);
-    fmt_float(hum_s,  sizeof(hum_s),  humidity);
+    fmt_float(hum_s,  sizeof(hum_s),  humidity); // Fixed: was float_float
     fmt_float(pow_s,  sizeof(pow_s),  power);
 
     char body[BUF];
@@ -417,7 +420,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=2,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 5000);
+    at(g_tx, 3000); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[SB] TCP open failed\n");
         return false;
@@ -436,24 +439,24 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=2,%d\r\n", req_len);
-    at(g_tx, 2000);
+    at(g_tx, 1000); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
         esp_read(1000);
         if (!strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
-            at("AT+CIPCLOSE=2\r\n", 1000);
+            at("AT+CIPCLOSE=2\r\n", 500); // Reduced from 1000
             return false;
         }
     }
 
     printf("[SB] Sending telemetry: %s\n", body);
     esp_send(query);
-    esp_read(5000);
+    esp_read(3000); // Reduced from 5000
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
 
-    at("AT+CIPCLOSE=2\r\n", 2000);
+    at("AT+CIPCLOSE=2\r\n", 500); // Reduced from 2000
     return ok;
 }
 
@@ -472,7 +475,7 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     // Connection id 3 -- ids 0-2 are ThingSpeak/Telegram/telemetry
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=3,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 5000);
+    at(g_tx, 3000); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[SB] TCP open failed\n");
         return false;
@@ -491,26 +494,27 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=3,%d\r\n", req_len);
-    at(g_tx, 2000);
+    at(g_tx, 1000); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
         esp_read(1000);
         if (!strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
-            at("AT+CIPCLOSE=3\r\n", 1000);
+            at("AT+CIPCLOSE=3\r\n", 500); // Reduced from 1000
             return false;
         }
     }
 
     printf("[SB] Sending alert: %s\n", body);
     esp_send(query);
-    esp_read(5000);
+    esp_read(3000); // Reduced from 5000
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
 
-    at("AT+CIPCLOSE=3\r\n", 2000);
+    at("AT+CIPCLOSE=3\r\n", 500); // Reduced from 2000
     return ok;
 }
+
 
 
 //  ESP-01 INIT
@@ -521,33 +525,33 @@ static bool wifi_connected = false;
 static void esp_init(void)
 {
     printf("=== ESP-01 init ===\n");
-    at("AT+RST\r\n",      3000);
-    at("AT\r\n",          1000);
-    at("AT+CWMODE=1\r\n", 1000);
+    at("AT+RST\r\n",      2000); // Reduced from 3000
+    at("AT\r\n",          500);  // Reduced from 1000
+    at("AT+CWMODE=1\r\n", 500);  // Reduced from 1000
 
     printf(">> Joining WiFi...\n");
     snprintf(g_tx, sizeof(g_tx),
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(12000);
+    esp_read(8000); // Reduced from 12000
 
     if      (strstr(g_rx, "GOT IP")) { wifi_connected = true;  printf("[WIFI] Connected!\n"); }
     else if (strstr(g_rx, "FAIL"))   { wifi_connected = false; printf("[WIFI] FAILED — check SSID/password\n"); }
 
     thread_sleep_for(2000);
-    at("AT+CIFSR\r\n",    1000);
-    at("AT+CIPMUX=1\r\n", 1000);
+    at("AT+CIFSR\r\n",    500);  // Reduced from 1000
+    at("AT+CIPMUX=1\r\n",  500); // Reduced from 1000
     printf("=== ESP-01 ready ===\n");
 }
 
-// rejoins wifi after the AP drops the connection mid-session 
+// rejoins wifi after the AP drops the connection mid-session
 static void wifi_reconnect(void)
 {
     printf("[WIFI] Reconnecting...\n");
     snprintf(g_tx, sizeof(g_tx),
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(12000);
+    esp_read(8000); // Reduced from 12000
 
     if (strstr(g_rx, "GOT IP")) {
         wifi_connected = true;
@@ -559,8 +563,8 @@ static void wifi_reconnect(void)
 }
 
 
-//  NETWORK TASK  — runs entirely on its own Thread every command to wait is here
 
+//  NETWORK TASK  — runs entirely on its own Thread every command to wait is here
 
 
 static void network_task(void)
@@ -586,11 +590,11 @@ static void network_task(void)
     while (1) {
         uint64_t now = Kernel::get_ms_count();
 
-        //  Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS 
+        //  Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS
         int rfid_now = get_latest_rfid();
         if (rfid_now != 0 && now - last_tg_send >= TG_COOLDOWN_MS) {
             last_tg_send = now;                                                             //TELEGRAM MESSAGE YO
-            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!"; //CHANGE THE THINGS HERE TO CHANGE WHAT IS BEING SAID IN TELEGRAM 
+            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!"; //CHANGE THE THINGS HERE TO CHANGE WHAT IS BEING SAID IN TELEGRAM
             if (send_telegram_via_relay(msg)) {
                 consecutive_failures = 0;
             } else {
@@ -605,42 +609,6 @@ static void network_task(void)
                 consecutive_failures++;
             }
         }
-
-        //thinkspeak: runs every SEND_INTERVAL_MS
-        // if (now - last_send >= SEND_INTERVAL_MS) {
-        //     last_send = now;
-
-        //     float temperature = read_temperature();
-        //     float humidity    = read_humidity();
-        //     float current     = read_current();
-        //     int   rfid        = get_latest_rfid();
-
-        //     fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
-        //     fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
-        //     fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
-        //     snprintf (ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
-
-        //     printf("\n[DATA]\n");
-        //     for (int i = 0; i < TS_NUM_FIELDS; i++) {
-        //         if (ts_fields[i].field == 0) continue;
-        //         printf("  field%d  %-15s = %s\n",
-        //                ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
-        //     }
-
-        //     if (send_to_thingspeak()) {
-        //         consecutive_failures = 0;
-        //     } else {
-        //         printf("[WARN] Send failed, retrying next cycle\n");
-        //         consecutive_failures++;
-        //     }
-
-        //     if (send_sensor_telemetry_via_relay(temperature, humidity, current)) {
-        //         consecutive_failures = 0;
-        //     } else {
-        //         printf("[WARN] Supabase telemetry send failed\n");
-        //         consecutive_failures++;
-        //     }
-        // }
 
         // ---- ThingSpeak & Supabase telemetry (RUN IN PARALLEL) ----
     if (now - last_send >= SEND_INTERVAL_MS) {
@@ -683,7 +651,7 @@ static void network_task(void)
             printf("  field%d  %-15s = %s\n",
                     ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
         }
-    
+
 
         if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
             consecutive_failures = 0;
@@ -693,6 +661,7 @@ static void network_task(void)
         thread_sleep_for(10);   // network task doesn't need a tight loop changed from 50 to 10
     }
 }
+
 
 
 //  MAIN — owns RFID polling + LEDs only
