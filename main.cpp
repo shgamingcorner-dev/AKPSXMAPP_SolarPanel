@@ -388,6 +388,133 @@ static bool send_telegram_via_relay(const char *message)
 }
 
 // ============================================================
+<<<<<<< HEAD
+=======
+//  SUPABASE BRIDGE (via the same relay, POST with a form body)
+//
+//  `seq` is a monotonically increasing counter shared across both
+//  calls below. The relay upserts on `seq` with ignore-duplicates, so
+//  if an AT-command timeout makes us retry a request that actually
+//  succeeded server-side, the retry becomes a no-op instead of a
+//  duplicate row. It only needs to be unique within one board's
+//  session -- it resets to 0 on reboot, which is fine since a fresh
+//  boot means the AP-side retry history is gone too.
+// ============================================================
+
+static uint32_t g_seq = 0;
+
+static bool send_sensor_telemetry_via_relay(float temperature, float humidity, float power)
+{
+    char temp_s[16], hum_s[16], pow_s[16];
+    fmt_float(temp_s, sizeof(temp_s), temperature);
+    fmt_float(hum_s,  sizeof(hum_s),  humidity);
+    fmt_float(pow_s,  sizeof(pow_s),  power);
+
+    char body[BUF];
+    snprintf(body, sizeof(body),
+        "secret=%s&temperature=%s&humidity=%s&power=%s&seq=%lu",
+        RELAY_SECRET, temp_s, hum_s, pow_s, (unsigned long)g_seq++);
+    int body_len = strlen(body);
+
+    // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=2,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
+    at(g_tx, 5000);
+    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+        printf("[SB] TCP open failed\n");
+        return false;
+    }
+
+    char query[BUF];
+    snprintf(query, sizeof(query),
+        "POST /sensor-telemetry HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n"
+        "%s",
+        RELAY_HOST, body_len, body);
+
+    int req_len = strlen(query);
+
+    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=2,%d\r\n", req_len);
+    at(g_tx, 2000);
+    if (!strstr(g_rx, ">")) {
+        esp_read(1000);
+        if (!strstr(g_rx, ">")) {
+            printf("[SB] No > prompt\n");
+            at("AT+CIPCLOSE=2\r\n", 1000);
+            return false;
+        }
+    }
+
+    printf("[SB] Sending telemetry: %s\n", body);
+    esp_send(query);
+    esp_read(5000);
+
+    bool ok = strstr(g_rx, "200 OK") != NULL;
+    printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n");
+
+    at("AT+CIPCLOSE=2\r\n", 2000);
+    return ok;
+}
+
+static bool send_alert_log_via_relay(const char *level, const char *message, const char *category)
+{
+    char encoded_msg[128];
+    urlencode(encoded_msg, sizeof(encoded_msg), message);
+
+    char body[BUF];
+    snprintf(body, sizeof(body),
+        "secret=%s&level=%s&message=%s&category=%s&seq=%lu",
+        RELAY_SECRET, level, encoded_msg, category, (unsigned long)g_seq++);
+    int body_len = strlen(body);
+
+    // Connection id 3 -- ids 0-2 are ThingSpeak/Telegram/telemetry
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=3,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
+    at(g_tx, 5000);
+    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+        printf("[SB] TCP open failed\n");
+        return false;
+    }
+
+    char query[BUF];
+    snprintf(query, sizeof(query),
+        "POST /alert-log HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n"
+        "%s",
+        RELAY_HOST, body_len, body);
+
+    int req_len = strlen(query);
+
+    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=3,%d\r\n", req_len);
+    at(g_tx, 2000);
+    if (!strstr(g_rx, ">")) {
+        esp_read(1000);
+        if (!strstr(g_rx, ">")) {
+            printf("[SB] No > prompt\n");
+            at("AT+CIPCLOSE=3\r\n", 1000);
+            return false;
+        }
+    }
+
+    printf("[SB] Sending alert: %s\n", body);
+    esp_send(query);
+    esp_read(5000);
+
+    bool ok = strstr(g_rx, "200 OK") != NULL;
+    printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n");
+
+    at("AT+CIPCLOSE=3\r\n", 2000);
+    return ok;
+}
+
+// ============================================================
+>>>>>>> 55f57064e017bd439328c9119fcc1111f2fd6cc8
 //  ESP-01 INIT
 // ============================================================
 
@@ -479,6 +606,16 @@ static void network_task(void)
                 printf("[WARN] Telegram send failed\n");
                 consecutive_failures++;
             }
+<<<<<<< HEAD
+=======
+
+            if (send_alert_log_via_relay("success", msg, "rfid")) {
+                consecutive_failures = 0;
+            } else {
+                printf("[WARN] Alert log send failed\n");
+                consecutive_failures++;
+            }
+>>>>>>> 55f57064e017bd439328c9119fcc1111f2fd6cc8
         }
 
         // ---- ThingSpeak: unchanged, runs every SEND_INTERVAL_MS ----
@@ -507,6 +644,16 @@ static void network_task(void)
             } else {
                 printf("[WARN] Send failed, retrying next cycle\n");
                 consecutive_failures++;
+<<<<<<< HEAD
+=======
+            }
+
+            if (send_sensor_telemetry_via_relay(temperature, humidity, current)) {
+                consecutive_failures = 0;
+            } else {
+                printf("[WARN] Supabase telemetry send failed\n");
+                consecutive_failures++;
+>>>>>>> 55f57064e017bd439328c9119fcc1111f2fd6cc8
             }
         }
 
