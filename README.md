@@ -18,11 +18,6 @@ Starting with version 6.5, Mbed OS uses Mbed CLI 2. It uses Ninja as a build sys
 
 ## Application functionality
 
-<<<<<<< HEAD
-The `main()` function is one of the two threads. It currently only runs the RFID checker
-
-The other thread is called network_task(). This one currently runs the code required for ESP-01 to upload the data to thinkspeak
-=======
 The `main()` function is one of the two threads. It currently only runs the RFID checker.
 
 The other thread is called `network_task()`. It owns everything network-related: joining WiFi
@@ -96,7 +91,6 @@ is why it's the current host.
 - **Credentials are still committed in plaintext** (`WIFI_PASSWORD`, `RELAY_SECRET`) since this is
   a public repo shared with hardware that has no secret storage. Rotate `RELAY_SECRET` if it ever
   needs to change, and don't reuse a WiFi password here that matters elsewhere.
->>>>>>> 55f57064e017bd439328c9119fcc1111f2fd6cc8
 
 
 ## Building and running
