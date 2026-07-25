@@ -47,6 +47,10 @@ static DigitalOut led_Red(PC_2);
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 
+// Command Center Phase 1 -- mainLighting toggle from the dashboard
+#define MAIN_LIGHT_PIN PX_X   // TODO: set to the actual pin your spare LED is wired to
+static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
+
 
 DHT11 dht11(DHT11_PIN);
 
@@ -511,6 +515,71 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 
 
 
+//  DEVICE STATE POLL (Command Center Phase 1 -- mainLighting only)
+//
+//  Polls the relay's /device-state route (reads device_states.main_lighting
+//  from Supabase) and drives led_mainLighting to match. Only writes the pin
+//  when the value actually changes, so we're not toggling it every cycle.
+
+
+static bool last_main_lighting = false;
+static bool main_lighting_known = false;
+
+static bool poll_device_state_via_relay(void)
+{
+    // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
+    at(g_tx, 3000);
+    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+        printf("[DS] TCP open failed\n");
+        return false;
+    }
+
+    char query[BUF];
+    snprintf(query, sizeof(query),
+        "GET /device-state?secret=%s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Connection: close\r\n\r\n",
+        RELAY_SECRET, RELAY_HOST);
+
+    int req_len = strlen(query);
+
+    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=4,%d\r\n", req_len);
+    at(g_tx, 1000);
+    if (!strstr(g_rx, ">")) {
+        esp_read(1000);
+        if (!strstr(g_rx, ">")) {
+            printf("[DS] No > prompt\n");
+            at("AT+CIPCLOSE=4\r\n", 500);
+            return false;
+        }
+    }
+
+    esp_send(query);
+    esp_read(3000);
+
+    bool ok = strstr(g_rx, "200 OK") != NULL;
+    if (ok) {
+        bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
+                           || strstr(g_rx, "\"main_lighting\": true") != NULL;
+
+        if (!main_lighting_known || main_lighting != last_main_lighting) {
+            led_mainLighting = main_lighting ? 1 : 0;
+            last_main_lighting = main_lighting;
+            main_lighting_known = true;
+            printf("[DS] mainLighting -> %s\n", main_lighting ? "ON" : "OFF");
+        }
+    } else {
+        printf("[DS] Unexpected response — check relay logs\n");
+    }
+
+    at("AT+CIPCLOSE=4\r\n", 500);
+    return ok;
+}
+
+
+
 //  ESP-01 INIT
 
 
@@ -577,6 +646,9 @@ static void network_task(void)
     uint64_t last_tg_send = 0;
     const uint64_t TG_COOLDOWN_MS = 5000; // 5 sec for testing — raise back to 60000 later
 
+    uint64_t last_device_state_poll = 0;
+    const uint64_t DEVICE_STATE_POLL_MS = 7000; // Command Center Phase 1 poll interval
+
     // If wifi looks dead 3 times rejoin
     int consecutive_failures = 0;
     const int MAX_CONSECUTIVE_FAILURES = 3;
@@ -600,6 +672,17 @@ static void network_task(void)
                 consecutive_failures = 0;
             } else {
                 printf("[WARN] Alert log send failed\n");
+                consecutive_failures++;
+            }
+        }
+
+        // ---- Command Center Phase 1: poll mainLighting from the dashboard ----
+        if (now - last_device_state_poll >= DEVICE_STATE_POLL_MS) {
+            last_device_state_poll = now;
+            if (poll_device_state_via_relay()) {
+                consecutive_failures = 0;
+            } else {
+                printf("[WARN] Device state poll failed\n");
                 consecutive_failures++;
             }
         }
