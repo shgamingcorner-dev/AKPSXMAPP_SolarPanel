@@ -1,6 +1,6 @@
 #undef __ARM_FP
 
-
+//Libraries
 #include "mbed.h"
 #include "MFRC522.h"
 #include <stdio.h>
@@ -8,49 +8,39 @@
 #include <ctype.h>
 #include "DHT11.h"
 
-#define RST_PIN PA_2
-#define SS_PIN  PB_2
-
 MFRC522             mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 
-
-//  api keys/wifi information
-
-
-// ROTATE THESE BEFORE COMMITTING — the previous values were committed to a
-// public repo in plaintext. Put your NEW WiFi password here after changing
-// it on your router, and never reuse a value that was ever pushed to git.
+//api keys and wifi credentials — change these to your own before compiling
 #define WIFI_SSID        "SINGTEL-2TKY"
 #define WIFI_PASSWORD    "3rx3cfm2hb"
 #define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
 #define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
 
-//  Telegram-via-relay config
-//  The bot token lives ONLY on the relay server (as a Replit Secret) now —
-//  the firmware never sees it, so there's nothing Telegram-related left to
-//  leak from this file. RELAY_SECRET is just a shared password between this
-//  board and the relay so randoms on the internet can't POST messages
-//  through it; it is NOT the bot token. Get a new bot token from @BotFather
-//  if the old one leaked (/revoke), and set it as TELEGRAM_BOT_TOKEN on the
-//  relay's Replit Secrets — not here.
+//  relay server for HTTPS Bridging requests
 #define RELAY_HOST    "shgam.pythonanywhere.com"  // no https://, no trailing slash
 #define RELAY_PORT    80
 #define RELAY_SECRET  "ab805d0429869cfc507b54bd1921a2ae"     // must match RELAY_SECRET on the relay
 
-// ThingSpeak field assignment
+// thinkspeak field assignment to sensor data
 #define TS_FIELD_TEMPERATURE   1
 #define TS_FIELD_HUMIDITY      2
 #define TS_FIELD_CURRENT       3
 #define TS_FIELD_RFIDQ         4
 // #define TS_FIELD_XnXX      5   // uncomment to add more123
 
-// RFID UIDs
+// RFID UIDs (change to own before compiling for each card/tag)
 #define RFID_UID_CARD  "15828045"
 #define RFID_UID_TAG   "E09F8E21"
 
 
 //  HARDWARE PINS
+
+#define RST_PIN PA_2
+#define SS_PIN  PB_2
+
+MFRC522             mfrc522(SS_PIN, RST_PIN);
+MFRC522::MIFARE_Key key;
 
 #define ESP_TX  PC_10
 #define ESP_RX  PC_11
@@ -67,7 +57,7 @@ static DigitalOut DHT11VCC(PA_7);
 DHT11 dht11(DHT11_PIN);
 
 
-//  INTERNALS — no need to edit below this line
+//  DONOTEDIT — no need to edit below this line unless programming your own stuff
 
 
 #define TS_HOST  "api.thingspeak.com"
@@ -79,21 +69,19 @@ static char g_tx[BUF];
 static char g_rx[BUF];
 static char tagID[9];
 
-// ============================================================
-//  SHARED STATE BETWEEN THREADS
+
+//  VALUES SHARED BETWEEN THREADS!!
 //
-//  main thread  : owns RFID scanning + LEDs, runs every ~10ms
-//  network task : owns WiFi/ThingSpeak/Telegram, runs on its own loop
+//  main thread  : does RFID scanning + LEDs, runs every ~10ms using threadsleepfor
+//  network task : does WiFi/ThingSpeak/Telegram, runs on its own loop
 //
-//  The only thing the network task needs from the main thread is
-//  the latest RFID match result, so that's the only piece of
-//  state that's shared, and it's protected by a mutex.
-// ============================================================
+
+
 
 static Mutex   rfid_mutex;
 static volatile int g_latest_rfid = 0;
 
-static void set_latest_rfid(int value)
+static void set_latest_rfid(int value) //RFID match results that are shared between threads so its protected by a mutex
 {
     rfid_mutex.lock();
     g_latest_rfid = value;
@@ -116,9 +104,9 @@ static void fmt_float(char *out, int out_sz, float v)
     snprintf(out, out_sz, "%d.%d", whole, frac);
 }
 
-// ============================================================
+
 //  RFID  (runs on the main thread)
-// ============================================================
+
 
 static bool rfid_readID(void)
 {
@@ -153,8 +141,7 @@ static int read_RFID(void)
 }
 
 
-//  SENSOR FUNCTIONS
-//  (called from the network task, right before each send)
+//  SENSOR FUNCTIONS all called from network task before sending the data
 
 static float read_temperature(void)
 {
@@ -216,9 +203,9 @@ static ts_field_t ts_fields[TS_NUM_FIELDS] = {
     { TS_FIELD_RFIDQ,       "", "RFID"        },
 };
 
-// ============================================================
+
 //  ESP-01 LOW-LEVEL  (all called only from the network task)
-// ============================================================
+
 
 static void esp_send(const char *cmd)
 {
@@ -272,9 +259,9 @@ static void urlencode(char *dst, int dst_sz, const char *src)
 
 
 
-// ============================================================
+
 //  THINGSPEAK SENDER
-// ============================================================
+
 
 static bool send_to_thingspeak(void)
 {
@@ -330,10 +317,9 @@ static bool send_to_thingspeak(void)
     return true;
 }
 
-// ============================================================
-//  TELEGRAM SENDER (via the HTTPS relay, since the ESP-01's AT
-//  firmware can only do plain HTTP and Telegram requires TLS)
-// ============================================================
+
+//  TELEGRAM SENDER (via the HTTPS relay, since the ESP-01's AT firmware can only do plain HTTP and Telegram requires HTTPS)
+
 
 static bool send_telegram_via_relay(const char *message)
 {
@@ -373,10 +359,7 @@ static bool send_telegram_via_relay(const char *message)
     esp_send(query);
     esp_read(5000);
 
-    // Check the HTTP status line, not the JSON body -- the relay's success
-    // body can be longer than this buffer, so searching for "ok":true deep
-    // in the body gives false negatives on truncated reads. The relay
-    // itself only returns 200 when Telegram's send actually succeeded.
+    // Check the HTTP status line, not the JSON body 
     if (strstr(g_rx, "200 OK")) {
         printf("[TG] Message sent OK\n");
     } else {
@@ -387,20 +370,14 @@ static bool send_telegram_via_relay(const char *message)
     return true;
 }
 
-// ============================================================
+
 //  SUPABASE BRIDGE (via the same relay, POST with a form body)
-//
-//  `seq` is a monotonically increasing counter shared across both
-//  calls below. The relay upserts on `seq` with ignore-duplicates, so
-//  if an AT-command timeout makes us retry a request that actually
-//  succeeded server-side, the retry becomes a no-op instead of a
-//  duplicate row. It only needs to be unique within one board's
-//  session -- it resets to 0 on reboot, which is fine since a fresh
-//  boot means the AP-side retry history is gone too.
-// ============================================================
 
-static uint32_t g_seq = 0;
 
+static uint32_t g_seq = 0; // 'seq' is a increasing counter that is shared across both calls of the function it just that so the retries is just no op instead of dupe rows
+
+
+//SUPABASE
 static bool send_sensor_telemetry_via_relay(float temperature, float humidity, float power)
 {
     char temp_s[16], hum_s[16], pow_s[16];
@@ -451,12 +428,13 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     esp_read(5000);
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
-    printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n");
+    printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
 
     at("AT+CIPCLOSE=2\r\n", 2000);
     return ok;
 }
 
+//Telegram sender?
 static bool send_alert_log_via_relay(const char *level, const char *message, const char *category)
 {
     char encoded_msg[128];
@@ -505,15 +483,15 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     esp_read(5000);
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
-    printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n");
+    printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
 
     at("AT+CIPCLOSE=3\r\n", 2000);
     return ok;
 }
 
-// ============================================================
+
 //  ESP-01 INIT
-// ============================================================
+
 
 static bool wifi_connected = false;
 
@@ -539,9 +517,7 @@ static void esp_init(void)
     printf("=== ESP-01 ready ===\n");
 }
 
-// Rejoins WiFi after the AP drops the connection mid-session (AT+CWJAP
-// doesn't auto-retry). CIPMUX stays set across a CWJAP-only rejoin, so it
-// doesn't need to be resent.
+// rejoins wifi after the AP drops the connection mid-session 
 static void wifi_reconnect(void)
 {
     printf("[WIFI] Reconnecting...\n");
@@ -559,13 +535,10 @@ static void wifi_reconnect(void)
     }
 }
 
-// ============================================================
-//  NETWORK TASK  — runs entirely on its own Thread
-//
-//  Owns: ESP-01 init, WiFi join, sensor reads, ThingSpeak upload
-//  cycle, and Telegram-on-scan. Every blocking AT-command wait
-//  here only stalls this thread, never the RFID/LED loop in main().
-// ============================================================
+
+//  NETWORK TASK  — runs entirely on its own Thread every command to wait is here
+
+
 
 static void network_task(void)
 {
@@ -583,20 +556,18 @@ static void network_task(void)
     uint64_t last_tg_send = 0;
     const uint64_t TG_COOLDOWN_MS = 5000; // 5 sec for testing — raise back to 60000 later
 
-    // If the AP drops the connection mid-session, every AT+CIPSTART just
-    // fails with "no ip" forever since AT+CWJAP never auto-retries. Track
-    // consecutive failures and force a rejoin once it looks like WiFi died.
+    // If wifi looks dead 3 times rejoin
     int consecutive_failures = 0;
     const int MAX_CONSECUTIVE_FAILURES = 3;
 
     while (1) {
         uint64_t now = Kernel::get_ms_count();
 
-        // ---- Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS ----
+        //  Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS 
         int rfid_now = get_latest_rfid();
         if (rfid_now != 0 && now - last_tg_send >= TG_COOLDOWN_MS) {
-            last_tg_send = now;
-            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!";
+            last_tg_send = now;                                                             //TELEGRAM MESSAGE YO
+            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!"; //CHANGE THE THINGS HERE TO CHANGE WHAT IS BEING SAID IN TELEGRAM 
             if (send_telegram_via_relay(msg)) {
                 consecutive_failures = 0;
             } else {
@@ -612,7 +583,7 @@ static void network_task(void)
             }
         }
 
-        // ---- ThingSpeak: unchanged, runs every SEND_INTERVAL_MS ----
+        //thinkspeak: runs every SEND_INTERVAL_MS
         if (now - last_send >= SEND_INTERVAL_MS) {
             last_send = now;
 
@@ -661,8 +632,7 @@ static void network_task(void)
 //  MAIN — owns RFID polling + LEDs only
 
 
-// Explicit (smaller than default 4KB) stack — this board only has 20KB
-// total RAM and was hitting 100% usage with the default thread stack size.
+
 static Thread networkThread(osPriorityNormal, 2048);
 
 
