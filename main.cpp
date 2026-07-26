@@ -74,10 +74,18 @@ DHT11 dht11(DHT11_PIN);
 #define TS_HOST  "api.thingspeak.com"
 #define TS_PORT  80
 #define BUF      256
+// g_rx gets its own, larger size -- BUF is also used for stack-local query/body
+// buffers in the send_* functions (all running on networkThread's 2048-byte
+// stack), so bumping BUF itself would blow the stack. g_rx is a static/global
+// buffer, so growing only it costs static RAM, not stack.
+// This fixes a real overflow: the /device-state response (preamble + IPD
+// header + ~230-byte HTTP response) totals ~274 bytes, over BUF's 255 usable
+// bytes, silently truncating the tail ("main_lighting":true) every time.
+#define RX_BUF   512
 
 static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
 static char g_tx[BUF];
-static char g_rx[BUF];
+static char g_rx[RX_BUF];
 static char tagID[9];
 
 
