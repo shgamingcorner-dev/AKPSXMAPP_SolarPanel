@@ -30,6 +30,14 @@
 #define RFID_UID_CARD  "15828045"
 #define RFID_UID_TAG   "E09F8E21"
 
+// motor timings
+#define WAIT_TIME_MS_0 2000 //sleep enough time to allow motor turns to the
+preferred position
+#define PERIOD_WIDTH 20 //period in ms according to the servo motor datasheet
+#define PULSE_WIDTH_90_DEGREE 2400 //pulse width in us to move to 90 degree position
+#define PULSE_WIDTH_0_DEGREE 1500 //pulse width in us to move to 0 position
+#define PULSE_WIDTH_N_90_DEGREE 600 //pulse width in us to move to -90 degree position
+
 //  HARDWARE PINS
 #define RST_PIN PA_2
 #define SS_PIN  PB_2
@@ -37,18 +45,25 @@
 #define ESP_RX  PC_11
 #define DHT11_PIN PA_1
 
+// ACS712 20A current sensor -- OUT goes through a 10k/15k divider (0.6 ratio)
+// before this pin, since the sensor runs on 5V but the ADC only tolerates 3.3V.
+#define CURRENT_SENSOR_PIN PA_0
+
 MFRC522             mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 
+PwmOut motor(PA_7);
 static DigitalOut led_tx(PB_14);
 static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
 static DigitalOut led_Red(PC_2);
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
+static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 
-// Command Center Phase 1 -- mainLighting toggle from the dashboard
-#define MAIN_LIGHT_PIN PC_4   // TODO: set to the actual pin your spare LED is wired to
+
+// Command Center == mainLighting toggle from the dashboard
+#define MAIN_LIGHT_PIN PC_4   //Main lighting pin
 static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 
 
@@ -178,9 +193,29 @@ static float read_humidity(void)
 
 }
 
+// ACS712 20A: 100mV/A at the sensor, scaled to 60mV/A by the 10k/15k divider.
+// Zero-current point is VCC/2 (2.5V) at the sensor, scaled to 1.5V at the pin.
+// Adjust ACS712_ZERO_V if measured current reads non-zero with nothing connected
+// -- the sensor's offset and the divider's resistor tolerance both shift this a bit.
+#define ACS712_SENSITIVITY_V_PER_A 0.060f
+#define ACS712_ZERO_V              1.5f
+#define ADC_VREF                   3.3f
+
 static float read_current(void)
 {
-    return 226.0f;  // TODO: replace with real sensor
+    // Average several samples -- the ESP-01/RFID reader share a power rail
+    // with known instability (see README), so a single ADC sample is noisy.
+    const int samples = 20;
+    float sum = 0.0f;
+    for (int i = 0; i < samples; i++) {
+        sum += current_sensor.read();  // normalized 0.0-1.0 over ADC_VREF
+        wait_us(100);
+    }
+    float pin_voltage = (sum / samples) * ADC_VREF;
+    float current = (pin_voltage - ACS712_ZERO_V) / ACS712_SENSITIVITY_V_PER_A;
+
+    printf("Current: %.2f A (pin=%.3fV)\n", current, pin_voltage);
+    return current;
 }
 
 

@@ -50,8 +50,18 @@ is why it's the current host.
   auto-reconnect logic that rejoins after 3 consecutive send failures (handles the AP dropping the
   connection mid-session, since `AT+CWJAP` never auto-retries on its own).
 - **RFID**: reads card/tag UID via the MFRC522, matches against `RFID_UID_CARD`/`RFID_UID_TAG`.
-- **ThingSpeak**: uploads temperature, humidity, current (placeholder), and RFID state every
-  `SEND_INTERVAL_MS` (15s).
+- **ThingSpeak**: uploads temperature, humidity, current, and RFID state every `SEND_INTERVAL_MS`
+  (15s).
+- **Current sensing**: `read_current()` reads a real ACS712 (20A, 100mV/A) via `AnalogIn` on
+  `PA_0`. The sensor runs on 5V but the STM32 ADC only tolerates 3.3V, so its output goes through a
+  10kΩ/15kΩ divider first (0.6 ratio) — the firmware undoes that scaling when converting the pin
+  voltage back to amps. 20 samples are averaged per read to smooth out noise from the shared power
+  rail (see the WiFi instability note below). If a reading looks off-zero with nothing connected,
+  recalibrate `ACS712_ZERO_V` in `main.cpp` to the value you actually measure — sensor offset and
+  divider resistor tolerance both shift this slightly from the ideal 1.5V.
+- **Command Center Phase 1**: `poll_device_state_via_relay()` polls the relay's `GET /device-state`
+  route every `DEVICE_STATE_POLL_MS` (7s) and drives `led_mainLighting` (`PC_4`) to match the
+  dashboard's `main_lighting` toggle in Supabase, only writing the pin on an actual value change.
 - **Telegram alerts**: fires on RFID scan via the relay's `/telegram` route, rate-limited by
   `TG_COOLDOWN_MS`.
 - **Supabase bridge**: sensor readings and RFID alerts are also pushed to Supabase
@@ -74,13 +84,10 @@ is why it's the current host.
 
 ## What is still to be done
 
-- **Real current/power sensor.** `read_current()` currently returns a hardcoded `226.0f` — there's
-  no actual current sensor wired up yet.
-- **Act on `/device-state`.** The relay already exposes a `GET /device-state` route that returns
-  the dashboard's `main_lighting` toggle from Supabase, but the firmware doesn't poll it or drive
-  any actuator from it yet. The `DeviceState` type in the frontend also has `gateServo`, `hvacPower`,
-  `smartLock`, and `securityArmState` — none of these have a corresponding actuator or relay route
-  on the hardware side yet.
+- **Other device-state fields.** Only `main_lighting` is polled and acted on so far. The
+  `DeviceState` type in the frontend also has `gateServo`, `hvacPower`, `smartLock`, and
+  `securityArmState` — none of these have a corresponding actuator or relay route on the hardware
+  side yet.
 - **WiFi instability under load.** Serial logs show `WIFI DISCONNECT` happening frequently, often
   right around an RFID scan — most likely the ESP-01 and MFRC522 briefly drawing current spikes at
   the same time and browning out a shared, under-rated power supply. The auto-reconnect logic
