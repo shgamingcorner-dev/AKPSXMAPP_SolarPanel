@@ -219,6 +219,33 @@ static float read_current(void)
 }
 
 
+static float motor_init(void)
+{
+    motor.period_ms(PERIOD_WIDTH); //period according to the specification, e.g., 20ms
+    motor.pulsewidth_us(PULSE_WIDTH_0_DEGREE); //to 0 position, at the middle
+    printf("Move to 0 position: Middle\n");
+
+    thread_sleep_for(WAIT_TIME_MS_0); //wait for the motor moving to the position
+
+    return 0.0f;
+}
+
+static float motor_position_to_angle(float pulse_width_us)
+{
+    motor.pulsewidth_us(pulse_width_us); //Move to expected position
+    printf("Motor moving\n");
+
+    //angle calc
+    float angle = ((pulse_width_us - PULSE_WIDTH_0_DEGREE) / (PULSE_WIDTH_90_DEGREE - PULSE_WIDTH_N_90_DEGREE)) * 180.0f - 90.0f;
+    return angle;
+
+
+    thread_sleep_for(WAIT_TIME_MS_0); //wait for the motor moving to the position
+}
+
+
+
+
 
 //  THINGSPEAK FIELD TABLE
 
