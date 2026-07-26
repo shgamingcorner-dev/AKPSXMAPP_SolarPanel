@@ -62,7 +62,7 @@ static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 
 
 // Command Center == mainLighting toggle from the dashboard
-#define MAIN_LIGHT_PIN PC_4   //Main lighting pin
+#define MAIN_LIGHT_PIN PB_6   //Main lighting pin
 static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 
 
@@ -213,7 +213,12 @@ static float read_current(void)
     float pin_voltage = (sum / samples) * ADC_VREF;
     float current = (pin_voltage - ACS712_ZERO_V) / ACS712_SENSITIVITY_V_PER_A;
 
-    printf("Current: %.2f A (pin=%.3fV)\n", current, pin_voltage);
+    // %f isn't supported by this board's minimal printf (see fmt_float() note
+    // elsewhere in this file) -- format manually instead of silently no-op'ing.
+    char cur_s[16], volt_s[16];
+    fmt_float(cur_s, sizeof(cur_s), current);
+    fmt_float(volt_s, sizeof(volt_s), pin_voltage);
+    printf("Current: %s A (pin=%sV)\n", cur_s, volt_s);
     return current;
 }
 
