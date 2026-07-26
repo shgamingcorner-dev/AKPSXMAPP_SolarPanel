@@ -31,8 +31,7 @@
 #define RFID_UID_TAG   "E09F8E21"
 
 // motor timings
-#define WAIT_TIME_MS_0 2000 //sleep enough time to allow motor turns to the
-preferred position
+#define WAIT_TIME_MS_0 2000 //sleep enough time to allow motor to turn to the preferred position
 #define PERIOD_WIDTH 20 //period in ms according to the servo motor datasheet
 #define PULSE_WIDTH_90_DEGREE 2400 //pulse width in us to move to 90 degree position
 #define PULSE_WIDTH_0_DEGREE 1500 //pulse width in us to move to 0 position
@@ -234,13 +233,11 @@ static float motor_position_to_angle(float pulse_width_us)
 {
     motor.pulsewidth_us(pulse_width_us); //Move to expected position
     printf("Motor moving\n");
+    thread_sleep_for(WAIT_TIME_MS_0); //wait for the motor to reach the position before returning
 
     //angle calc
-    float angle = ((pulse_width_us - PULSE_WIDTH_0_DEGREE) / (PULSE_WIDTH_90_DEGREE - PULSE_WIDTH_N_90_DEGREE)) * 180.0f - 90.0f;
+    float angle = ((pulse_width_us - PULSE_WIDTH_0_DEGREE) / (float)(PULSE_WIDTH_90_DEGREE - PULSE_WIDTH_0_DEGREE)) * 90.0f;
     return angle;
-
-
-    thread_sleep_for(WAIT_TIME_MS_0); //wait for the motor moving to the position
 }
 
 
@@ -587,6 +584,9 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 static bool last_main_lighting = false;
 static bool main_lighting_known = false;
 
+static bool last_gate_servo = false;
+static bool gate_servo_known = false;
+
 static bool poll_device_state_via_relay(void)
 {
     // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
@@ -631,6 +631,19 @@ static bool poll_device_state_via_relay(void)
             last_main_lighting = main_lighting;
             main_lighting_known = true;
             printf("[DS] mainLighting -> %s\n", main_lighting ? "ON" : "OFF");
+        }
+
+        bool gate_servo = strstr(g_rx, "\"gate_servo\":true") != NULL
+                        || strstr(g_rx, "\"gate_servo\": true") != NULL;
+
+        if (!gate_servo_known || gate_servo != last_gate_servo) {
+            // Blocks this poll cycle for WAIT_TIME_MS_0 while the curtain moves --
+            // acceptable since gate_servo only changes rarely (dashboard toggle),
+            // unlike the RFID/telemetry sends which need to stay snappy.
+            motor_position_to_angle(gate_servo ? PULSE_WIDTH_90_DEGREE : PULSE_WIDTH_0_DEGREE);
+            last_gate_servo = gate_servo;
+            gate_servo_known = true;
+            printf("[DS] gateServo -> %s\n", gate_servo ? "OPEN" : "CLOSED");
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -814,6 +827,7 @@ static Thread networkThread(osPriorityNormal, 2048);
 int main(void)
 {
     mfrc522.PCD_Init();     //Initialisation for RFID
+    motor_init();           //Move curtain servo to its home position
 
     for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
 
