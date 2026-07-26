@@ -55,14 +55,14 @@ PwmOut motor(PA_7);
 static DigitalOut led_tx(PB_14);
 static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
-static DigitalOut led_Red(PC_2);
+static DigitalOut led_Red(PB_6); //PC_2
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 
 
 // Command Center == mainLighting toggle from the dashboard
-#define MAIN_LIGHT_PIN PB_6   //Main lighting pin
+#define MAIN_LIGHT_PIN PC_2   //Main lighting pin REMEMBER::::CHANGE TO PB_6
 static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 
 
