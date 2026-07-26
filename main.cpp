@@ -632,7 +632,7 @@ static bool poll_device_state_via_relay(void)
                            || strstr(g_rx, "\"main_lighting\": true") != NULL;
 
         if (!main_lighting_known || main_lighting != last_main_lighting) {
-            led_mainLighting = main_lighting ? 1 : 0;
+            led_mainLighting = main_lighting;
             last_main_lighting = main_lighting;
             main_lighting_known = true;
             printf("[DS] mainLighting -> %s\n", main_lighting ? "ON" : "OFF");
