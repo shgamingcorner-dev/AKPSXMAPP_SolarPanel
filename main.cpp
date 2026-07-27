@@ -9,8 +9,8 @@
 #include "DHT11.h"
 
 //api keys and wifi credentials — change these to your own before compiling
-#define WIFI_SSID        "SINGTEL-2TKY"
-#define WIFI_PASSWORD    "3rx3cfm2hb"
+#define WIFI_SSID        "fight random people for Wifi"
+#define WIFI_PASSWORD    "Hellothere"
 #define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
 #define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
 
@@ -55,7 +55,7 @@ PwmOut motor(PA_7);
 static DigitalOut led_tx(PB_14);
 static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
-static DigitalOut led_Red(PB_6); //PC_2
+static DigitalOut led_Red(PB_6); //PC_2         
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
