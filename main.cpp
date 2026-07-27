@@ -9,8 +9,8 @@
 #include "DHT11.h"
 
 //api keys and wifi credentials — change these to your own before compiling
-#define WIFI_SSID        "fight random people for Wifi"
-#define WIFI_PASSWORD    "Hellothere"
+#define WIFI_SSID        "bye"
+#define WIFI_PASSWORD    "goodbye1"
 #define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
 #define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
 
@@ -163,41 +163,38 @@ static int read_RFID(void)
 
 //  SENSOR FUNCTIONS all called from network task before sending the data
 
-static float read_temperature(void)
+// reads temperature and humidity from a single DHT11 transaction --
+// previously these were two separate independent reads, doubling bus
+// traffic and doubling exposure to timing/preemption failures every cycle
+static int g_dht_temperature = 2634;
+static int g_dht_humidity = 4001;
+
+static void read_dht11(void)
 {
     DHT11VCC = 1;
-    int temperature = 0;
-    temperature = dht11.readTemperature();
-    if (temperature != DHT11::ERROR_CHECKSUM && temperature != DHT11::ERROR_TIMEOUT)
+    int temperature = 0, humidity = 0;
+    int error = dht11.readTemperatureHumidity(temperature, humidity);
+    if (error == 0)
     {
         printf("Temperature: %d C\n", temperature);
-        return temperature;
+        printf("humidity: %d %%\n", humidity);
+        g_dht_temperature = temperature;
+        g_dht_humidity = humidity;
     }
     else
     {
-        printf("%s\n", dht11.getErrorString(temperature));
-        return 2634;
-        DHT11VCC=0;
+        printf("%s\n", dht11.getErrorString(error));
     }
+}
+
+static float read_temperature(void)
+{
+    return g_dht_temperature;
 }
 
 static float read_humidity(void)
 {
-    DHT11VCC = 1;
-    int humidity = 0;
-    humidity = dht11.readHumidity();
-    if (humidity != DHT11::ERROR_CHECKSUM && humidity != DHT11::ERROR_TIMEOUT)
-    {
-        printf("humidity: %d %%\n", humidity);
-        return humidity;
-    }
-    else
-    {
-        printf("%s\n", dht11.getErrorString(humidity));
-        return 4001;
-        DHT11VCC=0;
-    }
-
+    return g_dht_humidity;
 }
 
 // ACS712 20A: 100mV/A at the sensor, scaled to 60mV/A by the 10k/15k divider.
@@ -787,6 +784,7 @@ static void network_task(void)
             last_send = now;
 
             // Read sensors ONCE
+            read_dht11();
             float temperature = read_temperature();
             float humidity    = read_humidity();
             float current     = read_current();
