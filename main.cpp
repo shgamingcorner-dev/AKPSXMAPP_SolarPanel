@@ -282,9 +282,17 @@ static void esp_send(const char *cmd)
     led_tx = !led_tx;
 }
 
-static int esp_read(int wait_ms = 1000, bool allow_idle_exit = true) { //NEW
+// Optional stop1/stop2 are substrings that mark a genuine, protocol-level
+// end to this specific response (e.g. the actual "CONNECT"/"ERROR" result of
+// a CIPSTART, or ",CLOSED" once the far end -- which we always ask to close
+// via "Connection: close" -- has finished sending and closed the socket).
+// Checking for the real marker instead of guessing from a quiet gap means we
+// can safely return the moment the response is actually complete, without
+// the risk of returning early on a response that just arrived in bursts
+// (e.g. CIPSTART's command echo followed by a delayed CONNECT once the TCP
+// handshake completes) and letting the real reply spill into the next call.
+static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL) {
       uint32_t start = Kernel::get_ms_count();
-      uint32_t last_data_ms = start;
       int n = 0;
       // Poll until timeout OR buffer full -- do NOT bail out just because a
       // single poll found nothing readable. The response can arrive in more
@@ -293,29 +301,17 @@ static int esp_read(int wait_ms = 1000, bool allow_idle_exit = true) { //NEW
       // -- this is exactly what caused main_lighting to be misread as OFF
       // right after gate_servo (which sorts first in the JSON and so always
       // landed before any premature cutoff).
-      //
-      // Once data HAS started arriving though, waiting out the full wait_ms
-      // regardless is wasted time -- a sustained quiet gap (much longer than
-      // the momentary single-poll gap that caused the bug above) is a safe
-      // signal the response is complete, and cuts several seconds of dead
-      // waiting off every ThingSpeak/Supabase send.
-      //
-      // AT+CWJAP is the one exception (allow_idle_exit=false): the join
-      // handshake reports intermediate status lines (WIFI DISCONNECT /
-      // CONNECTED / GOT IP) as separate bursts with gaps between them that
-      // can exceed the idle threshold, so exiting early there can return
-      // before "GOT IP" ever arrives.
-      const uint32_t IDLE_GAP_MS = 80;
       while (Kernel::get_ms_count() - start < (uint32_t)wait_ms) {
           if (esp.readable()) {
               int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);
               if (chunk > 0) {
                   n += chunk;
-                  last_data_ms = Kernel::get_ms_count();
                   if (n >= (int)(sizeof(g_rx) - 1)) break;
+                  g_rx[n] = '\0'; // null-terminate so strstr below only sees bytes actually received
+                  if ((stop1 && strstr(g_rx, stop1)) || (stop2 && strstr(g_rx, stop2))) {
+                      break;
+                  }
               }
-          } else if (allow_idle_exit && n > 0 && (Kernel::get_ms_count() - last_data_ms) >= IDLE_GAP_MS) {
-              break;
           }
           thread_sleep_for(5); // Short yield (5ms vs previous 20ms+wait_ms)
       }
@@ -347,11 +343,11 @@ static int esp_read(int wait_ms = 1000, bool allow_idle_exit = true) { //NEW
 //     return n;
 // }
 
-static void at(const char *cmd, int wait_ms = 1000)
+static void at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL)
 {
     printf(">> %s", cmd);
     esp_send(cmd);
-    esp_read(wait_ms);
+    esp_read(wait_ms, stop1, stop2);
 }
 
 // Percent-encode a string for use in a URL query param
@@ -382,7 +378,7 @@ static bool send_to_thingspeak(void)
     // 1. Open TCP
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=0,\"TCP\",\"%s\",%d\r\n", TS_HOST, TS_PORT);
-    at(g_tx, 2000); // Reduced from 5000
+    at(g_tx, 2000, "CONNECT", "ERROR"); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[TS] TCP open failed\n");
         return false;
@@ -405,12 +401,12 @@ static bool send_to_thingspeak(void)
 
     // 3. CIPSEND
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=0,%d\r\n", req_len);
-    at(g_tx, 1000); // Reduced from 2000
+    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
-        esp_read(1000);
+        esp_read(1000, ">", "ERROR");
         if (!strstr(g_rx, ">")) {
             printf("[TS] No > prompt\n");
-            at("AT+CIPCLOSE=0\r\n", 1000); // Reduced from 2000
+            at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
             return false;
         }
     }
@@ -418,7 +414,7 @@ static bool send_to_thingspeak(void)
     // 4. Send
     printf("[TS] Sending: %s\n", query);
     esp_send(query);
-    esp_read(3000); // Reduced from 5000
+    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
 
     if (strstr(g_rx, "SEND OK") || strstr(g_rx, "200 OK")) {
         printf("[TS] Upload OK\n");
@@ -427,7 +423,7 @@ static bool send_to_thingspeak(void)
     }
 
     // 5. Close
-    at("AT+CIPCLOSE=0\r\n", 1000); // Reduced from 2000
+    at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
     return true;
 }
 
@@ -441,7 +437,7 @@ static bool send_telegram_via_relay(const char *message)
     // Connection id 1 — id 0 is used by send_to_thingspeak()
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=1,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000); // Reduced from 5000
+    at(g_tx, 3000, "CONNECT", "ERROR"); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[TG] TCP open failed\n");
         return false;
@@ -460,19 +456,19 @@ static bool send_telegram_via_relay(const char *message)
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=1,%d\r\n", req_len);
-    at(g_tx, 1000); // Reduced from 2000
+    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
-        esp_read(1000);
+        esp_read(1000, ">", "ERROR");
         if (!strstr(g_rx, ">")) {
             printf("[TG] No > prompt\n");
-            at("AT+CIPCLOSE=1\r\n", 500); // Reduced from 1000
+            at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 1000
             return false;
         }
     }
 
     printf("[TG] Sending: %s\n", query);
     esp_send(query);
-    esp_read(3000); // Reduced from 5000
+    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
 
     // Check the HTTP status line, not the JSON body
     if (strstr(g_rx, "200 OK")) {
@@ -481,7 +477,7 @@ static bool send_telegram_via_relay(const char *message)
         printf("[TG] Unexpected response — check relay logs / RELAY_SECRET\n");
     }
 
-    at("AT+CIPCLOSE=1\r\n", 500); // Reduced from 2000
+    at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 2000
     return true;
 }
 
@@ -510,7 +506,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=2,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000); // Reduced from 5000
+    at(g_tx, 3000, "CONNECT", "ERROR"); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[SB] TCP open failed\n");
         return false;
@@ -529,24 +525,24 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=2,%d\r\n", req_len);
-    at(g_tx, 1000); // Reduced from 2000
+    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
-        esp_read(1000);
+        esp_read(1000, ">", "ERROR");
         if (!strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
-            at("AT+CIPCLOSE=2\r\n", 500); // Reduced from 1000
+            at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 1000
             return false;
         }
     }
 
     printf("[SB] Sending telemetry: %s\n", body);
     esp_send(query);
-    esp_read(3000); // Reduced from 5000
+    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
 
-    at("AT+CIPCLOSE=2\r\n", 500); // Reduced from 2000
+    at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 2000
     return ok;
 }
 
@@ -565,7 +561,7 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     // Connection id 3 -- ids 0-2 are ThingSpeak/Telegram/telemetry
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=3,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000); // Reduced from 5000
+    at(g_tx, 3000, "CONNECT", "ERROR"); // Reduced from 5000
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[SB] TCP open failed\n");
         return false;
@@ -584,24 +580,24 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=3,%d\r\n", req_len);
-    at(g_tx, 1000); // Reduced from 2000
+    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
     if (!strstr(g_rx, ">")) {
-        esp_read(1000);
+        esp_read(1000, ">", "ERROR");
         if (!strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
-            at("AT+CIPCLOSE=3\r\n", 500); // Reduced from 1000
+            at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 1000
             return false;
         }
     }
 
     printf("[SB] Sending alert: %s\n", body);
     esp_send(query);
-    esp_read(3000); // Reduced from 5000
+    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
 
-    at("AT+CIPCLOSE=3\r\n", 500); // Reduced from 2000
+    at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 2000
     return ok;
 }
 
@@ -625,7 +621,7 @@ static bool poll_device_state_via_relay(void)
     // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000);
+    at(g_tx, 3000, "CONNECT", "ERROR");
     if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
         printf("[DS] TCP open failed\n");
         return false;
@@ -641,18 +637,18 @@ static bool poll_device_state_via_relay(void)
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=4,%d\r\n", req_len);
-    at(g_tx, 1000);
+    at(g_tx, 1000, ">", "ERROR");
     if (!strstr(g_rx, ">")) {
-        esp_read(1000);
+        esp_read(1000, ">", "ERROR");
         if (!strstr(g_rx, ">")) {
             printf("[DS] No > prompt\n");
-            at("AT+CIPCLOSE=4\r\n", 500);
+            at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
             return false;
         }
     }
 
     esp_send(query);
-    esp_read(3000);
+    esp_read(3000, "CLOSED"); // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     if (ok) {
@@ -682,7 +678,7 @@ static bool poll_device_state_via_relay(void)
         printf("[DS] Unexpected response — check relay logs\n");
     }
 
-    at("AT+CIPCLOSE=4\r\n", 500);
+    at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
     return ok;
 }
 
@@ -696,22 +692,22 @@ static bool wifi_connected = false;
 static void esp_init(void)
 {
     printf("=== ESP-01 init ===\n");
-    at("AT+RST\r\n",      2000); // Reduced from 3000
-    at("AT\r\n",          500);  // Reduced from 1000
-    at("AT+CWMODE=1\r\n", 500);  // Reduced from 1000
+    at("AT+RST\r\n",      2000, "ready");         // Reduced from 3000
+    at("AT\r\n",          500,  "OK");            // Reduced from 1000
+    at("AT+CWMODE=1\r\n", 500,  "OK");            // Reduced from 1000
 
     printf(">> Joining WiFi...\n");
     snprintf(g_tx, sizeof(g_tx),
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(8000, false); // Reduced from 12000 -- idle-exit disabled, see esp_read comment
+    esp_read(8000, "GOT IP", "FAIL"); // Reduced from 12000 -- exits as soon as the real join result is known
 
     if      (strstr(g_rx, "GOT IP")) { wifi_connected = true;  printf("[WIFI] Connected!\n"); }
     else if (strstr(g_rx, "FAIL"))   { wifi_connected = false; printf("[WIFI] FAILED — check SSID/password\n"); }
 
     thread_sleep_for(2000);
-    at("AT+CIFSR\r\n",    500);  // Reduced from 1000
-    at("AT+CIPMUX=1\r\n",  500); // Reduced from 1000
+    at("AT+CIFSR\r\n",    500, "OK");  // Reduced from 1000
+    at("AT+CIPMUX=1\r\n",  500, "OK"); // Reduced from 1000
     printf("=== ESP-01 ready ===\n");
 }
 
@@ -722,7 +718,7 @@ static void wifi_reconnect(void)
     snprintf(g_tx, sizeof(g_tx),
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(8000, false); // Reduced from 12000 -- idle-exit disabled, see esp_read comment
+    esp_read(8000, "GOT IP", "FAIL"); // Reduced from 12000 -- exits as soon as the real join result is known
 
     if (strstr(g_rx, "GOT IP")) {
         wifi_connected = true;
