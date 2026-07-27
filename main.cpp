@@ -282,7 +282,7 @@ static void esp_send(const char *cmd)
     led_tx = !led_tx;
 }
 
-static int esp_read(int wait_ms = 1000) { //NEW
+static int esp_read(int wait_ms = 1000, bool allow_idle_exit = true) { //NEW
       uint32_t start = Kernel::get_ms_count();
       uint32_t last_data_ms = start;
       int n = 0;
@@ -299,6 +299,12 @@ static int esp_read(int wait_ms = 1000) { //NEW
       // the momentary single-poll gap that caused the bug above) is a safe
       // signal the response is complete, and cuts several seconds of dead
       // waiting off every ThingSpeak/Supabase send.
+      //
+      // AT+CWJAP is the one exception (allow_idle_exit=false): the join
+      // handshake reports intermediate status lines (WIFI DISCONNECT /
+      // CONNECTED / GOT IP) as separate bursts with gaps between them that
+      // can exceed the idle threshold, so exiting early there can return
+      // before "GOT IP" ever arrives.
       const uint32_t IDLE_GAP_MS = 80;
       while (Kernel::get_ms_count() - start < (uint32_t)wait_ms) {
           if (esp.readable()) {
@@ -308,7 +314,7 @@ static int esp_read(int wait_ms = 1000) { //NEW
                   last_data_ms = Kernel::get_ms_count();
                   if (n >= (int)(sizeof(g_rx) - 1)) break;
               }
-          } else if (n > 0 && (Kernel::get_ms_count() - last_data_ms) >= IDLE_GAP_MS) {
+          } else if (allow_idle_exit && n > 0 && (Kernel::get_ms_count() - last_data_ms) >= IDLE_GAP_MS) {
               break;
           }
           thread_sleep_for(5); // Short yield (5ms vs previous 20ms+wait_ms)
@@ -698,7 +704,7 @@ static void esp_init(void)
     snprintf(g_tx, sizeof(g_tx),
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(8000); // Reduced from 12000
+    esp_read(8000, false); // Reduced from 12000 -- idle-exit disabled, see esp_read comment
 
     if      (strstr(g_rx, "GOT IP")) { wifi_connected = true;  printf("[WIFI] Connected!\n"); }
     else if (strstr(g_rx, "FAIL"))   { wifi_connected = false; printf("[WIFI] FAILED — check SSID/password\n"); }
@@ -716,7 +722,7 @@ static void wifi_reconnect(void)
     snprintf(g_tx, sizeof(g_tx),
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(8000); // Reduced from 12000
+    esp_read(8000, false); // Reduced from 12000 -- idle-exit disabled, see esp_read comment
 
     if (strstr(g_rx, "GOT IP")) {
         wifi_connected = true;
