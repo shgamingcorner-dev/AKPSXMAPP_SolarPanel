@@ -284,8 +284,8 @@ static void esp_send(const char *cmd)
 
 static int esp_read(int wait_ms = 1000) { //NEW
       uint32_t start = Kernel::get_ms_count();
+      uint32_t last_data_ms = start;
       int n = 0;
-
       // Poll until timeout OR buffer full -- do NOT bail out just because a
       // single poll found nothing readable. The response can arrive in more
       // than one chunk with a brief gap between them (e.g. a multi-segment
@@ -293,13 +293,23 @@ static int esp_read(int wait_ms = 1000) { //NEW
       // -- this is exactly what caused main_lighting to be misread as OFF
       // right after gate_servo (which sorts first in the JSON and so always
       // landed before any premature cutoff).
+      //
+      // Once data HAS started arriving though, waiting out the full wait_ms
+      // regardless is wasted time -- a sustained quiet gap (much longer than
+      // the momentary single-poll gap that caused the bug above) is a safe
+      // signal the response is complete, and cuts several seconds of dead
+      // waiting off every ThingSpeak/Supabase send.
+      const uint32_t IDLE_GAP_MS = 80;
       while (Kernel::get_ms_count() - start < (uint32_t)wait_ms) {
           if (esp.readable()) {
               int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);
               if (chunk > 0) {
                   n += chunk;
+                  last_data_ms = Kernel::get_ms_count();
                   if (n >= (int)(sizeof(g_rx) - 1)) break;
               }
+          } else if (n > 0 && (Kernel::get_ms_count() - last_data_ms) >= IDLE_GAP_MS) {
+              break;
           }
           thread_sleep_for(5); // Short yield (5ms vs previous 20ms+wait_ms)
       }
