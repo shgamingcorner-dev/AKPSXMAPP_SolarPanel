@@ -68,6 +68,11 @@ int DHT11::readRawData(byte data[5])
     wait_us(30);          //wait for 30us, max is 40us per the spec
 
     pin_DHT11.input();     //set the pin as input and wait for DHT11 pulling down the signal
+    pin_DHT11.mode(PullUp); // bias the line HIGH via the MCU's internal pull-up while
+                            // nothing else is driving it -- without this the pin was
+                            // left floating (PullNone) the whole time we wait for the
+                            // sensor's ACK, so a missing/weak external pull-up resistor
+                            // meant the line had no defined level to transition from
 
     // The whole time-sensitive exchange (from the sensor's ack pulse through
     // the 40 data bits) runs with the scheduler locked so networkThread's

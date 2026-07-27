@@ -7,6 +7,8 @@
 #include <string.h>
 #include <ctype.h>
 #include "DHT11.h"
+#include "lcd.h"	
+#include "keypad.h"	
 
 //api keys and wifi credentials — change these to your own before compiling
 #define WIFI_SSID        "bye"
@@ -26,6 +28,14 @@
 #define TS_FIELD_RFIDQ         4
 // #define TS_FIELD_XnXX      5   // uncomment to add more123
 
+
+//LCD
+unsigned char key2, outChar, outChar2, outChar3;
+unsigned char passWord[] = {'0', '0', '0', '0'};
+char Message1 [ ] = "1.Blind 2.Window";	 
+char Message2 [ ] = "3.Lighting 4.Fans ";
+char Message3 [ ] = "Invalid try again";
+
 // RFID UIDs (change to own before compiling for each card/tag)
 #define RFID_UID_CARD  "15828045"
 #define RFID_UID_TAG   "E09F8E21"
@@ -44,6 +54,7 @@
 #define ESP_RX  PC_11
 #define DHT11_PIN PA_1
 
+
 // ACS712 20A current sensor -- OUT goes through a 10k/15k divider (0.6 ratio)
 // before this pin, since the sensor runs on 5V but the ADC only tolerates 3.3V.
 #define CURRENT_SENSOR_PIN PA_0
@@ -59,6 +70,8 @@ static DigitalOut led_Red(PB_6); //PC_2
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
+// Keypad's InterruptIn/BusIn live in keypad_utilities.cpp -- keypad_init()
+// attaches the handler; key_pending/last_key (from keypad.h) are read here.
 
 
 // Command Center == mainLighting toggle from the dashboard
@@ -111,6 +124,48 @@ static int get_latest_rfid(void)
     rfid_mutex.lock();
     int v = g_latest_rfid;
     rfid_mutex.unlock();
+    return v;
+}
+
+// Keypad presses happen on the main thread, but all ESP-01 AT traffic
+// (esp_send/esp_read/g_tx/g_rx) only ever runs on networkThread -- so a key
+// press can't call the relay directly. Instead it just requests a toggle
+// here (same mutex-protected-flag shape as g_latest_rfid above), and
+// network_task() picks the request up and does the actual relay push.
+static Mutex   device_state_mutex;
+static volatile bool pending_blind_toggle = false;
+static volatile bool pending_lighting_toggle = false;
+
+static void request_blind_toggle(void)
+{
+    device_state_mutex.lock();
+    pending_blind_toggle = true;
+    device_state_mutex.unlock();
+}
+
+static void request_lighting_toggle(void)
+{
+    device_state_mutex.lock();
+    pending_lighting_toggle = true;
+    device_state_mutex.unlock();
+}
+
+// Returns true (and clears the flag) if a toggle was requested since the last call.
+static bool consume_pending_blind_toggle(void)
+{
+    device_state_mutex.lock();
+    bool v = pending_blind_toggle;
+    pending_blind_toggle = false;
+    device_state_mutex.unlock();
+    return v;
+}
+
+static bool consume_pending_lighting_toggle(void)
+{
+    device_state_mutex.lock();
+    bool v = pending_lighting_toggle;
+    pending_lighting_toggle = false;
+    device_state_mutex.unlock();
     return v;
 }
 
@@ -603,6 +658,65 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 
 
 
+//  DEVICE STATE PUSH (keypad -> relay -> Supabase)
+//
+//  Pushes a single field/value to the relay's new POST /device-state route,
+//  mirroring send_sensor_telemetry_via_relay()'s shape. Reuses connection
+//  id 4 -- the same one poll_device_state_via_relay() uses -- since both
+//  only ever run sequentially on networkThread, never concurrently.
+
+static bool send_device_state_via_relay(const char *field, bool value)
+{
+    char body[BUF];
+    snprintf(body, sizeof(body),
+        "secret=%s&field=%s&value=%s",
+        RELAY_SECRET, field, value ? "true" : "false");
+    int body_len = strlen(body);
+
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
+    at(g_tx, 3000, "CONNECT", "ERROR");
+    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+        printf("[DS] TCP open failed\n");
+        return false;
+    }
+
+    char query[BUF];
+    snprintf(query, sizeof(query),
+        "POST /device-state HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n"
+        "%s",
+        RELAY_HOST, body_len, body);
+
+    int req_len = strlen(query);
+
+    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=4,%d\r\n", req_len);
+    at(g_tx, 1000, ">", "ERROR");
+    if (!strstr(g_rx, ">")) {
+        esp_read(1000, ">", "ERROR");
+        if (!strstr(g_rx, ">")) {
+            printf("[DS] No > prompt\n");
+            at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+            return false;
+        }
+    }
+
+    printf("[DS] Pushing %s=%s\n", field, value ? "true" : "false");
+    esp_send(query);
+    esp_read(3000, "CLOSED"); // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+
+    bool ok = strstr(g_rx, "200 OK") != NULL;
+    printf(ok ? "[DS] Push OK\n" : "[DS] Unexpected response — check relay logs\n");
+
+    at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+    return ok;
+}
+
+
+
 //  DEVICE STATE POLL (Command Center Phase 1 -- mainLighting only)
 //
 //  Polls the relay's /device-state route (reads device_states.main_lighting
@@ -613,8 +727,33 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 static bool last_main_lighting = false;
 static bool main_lighting_known = false;
 
-static bool last_gate_servo = false;
-static bool gate_servo_known = false;
+static bool last_blind_open = false;
+static bool blind_known = false;
+
+// Actuation lives in exactly one place per device, called both by the
+// periodic poll below (for dashboard-initiated changes) and by the keypad
+// handler in network_task() (for physical-button-initiated changes) --
+// keeps a single source of truth for what "apply this state to hardware"
+// means, and gives the keypad instant feedback instead of waiting for the
+// next poll cycle to notice its own change.
+static void apply_main_lighting(bool on)
+{
+    led_mainLighting = on;
+    last_main_lighting = on;
+    main_lighting_known = true;
+    printf("[DS] mainLighting -> %s\n", on ? "ON" : "OFF");
+}
+
+static void apply_blind(bool open)
+{
+    // Blocks the caller for WAIT_TIME_MS_0 while the curtain moves --
+    // acceptable since blind only changes rarely (dashboard/keypad toggle),
+    // unlike the RFID/telemetry sends which need to stay snappy.
+    motor_position_to_angle(open ? PULSE_WIDTH_90_DEGREE : PULSE_WIDTH_0_DEGREE);
+    last_blind_open = open;
+    blind_known = true;
+    printf("[DS] blind -> %s\n", open ? "OPEN" : "CLOSED");
+}
 
 static bool poll_device_state_via_relay(void)
 {
@@ -656,23 +795,14 @@ static bool poll_device_state_via_relay(void)
                            || strstr(g_rx, "\"main_lighting\": true") != NULL;
 
         if (!main_lighting_known || main_lighting != last_main_lighting) {
-            led_mainLighting = main_lighting;
-            last_main_lighting = main_lighting;
-            main_lighting_known = true;
-            printf("[DS] mainLighting -> %s\n", main_lighting ? "ON" : "OFF");
+            apply_main_lighting(main_lighting);
         }
 
-        bool gate_servo = strstr(g_rx, "\"gate_servo\":true") != NULL
-                        || strstr(g_rx, "\"gate_servo\": true") != NULL;
+        bool blind = strstr(g_rx, "\"blind\":true") != NULL
+                  || strstr(g_rx, "\"blind\": true") != NULL;
 
-        if (!gate_servo_known || gate_servo != last_gate_servo) {
-            // Blocks this poll cycle for WAIT_TIME_MS_0 while the curtain moves --
-            // acceptable since gate_servo only changes rarely (dashboard toggle),
-            // unlike the RFID/telemetry sends which need to stay snappy.
-            motor_position_to_angle(gate_servo ? PULSE_WIDTH_90_DEGREE : PULSE_WIDTH_0_DEGREE);
-            last_gate_servo = gate_servo;
-            gate_servo_known = true;
-            printf("[DS] gateServo -> %s\n", gate_servo ? "OPEN" : "CLOSED");
+        if (!blind_known || blind != last_blind_open) {
+            apply_blind(blind);
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -780,6 +910,26 @@ static void network_task(void)
             }
         }
 
+        // ---- Keypad-requested device state changes ----
+        // Apply to hardware immediately (instant physical feedback) rather
+        // than waiting for the next poll cycle to notice its own change,
+        // then push to Supabase so the dashboard stays in sync.
+        if (consume_pending_blind_toggle()) {
+            apply_blind(!last_blind_open);
+            if (!send_device_state_via_relay("blind", last_blind_open)) {
+                printf("[WARN] Blind state push failed\n");
+                consecutive_failures++;
+            }
+        }
+
+        if (consume_pending_lighting_toggle()) {
+            apply_main_lighting(!last_main_lighting);
+            if (!send_device_state_via_relay("main_lighting", last_main_lighting)) {
+                printf("[WARN] Lighting state push failed\n");
+                consecutive_failures++;
+            }
+        }
+
         // ---- Command Center Phase 1: poll mainLighting from the dashboard ----
         if (now - last_device_state_poll >= DEVICE_STATE_POLL_MS) {
             last_device_state_poll = now;
@@ -854,15 +1004,33 @@ static void network_task(void)
 static Thread networkThread(osPriorityNormal, 2048);
 
 
-int main(void)
+int main(void) //RMAIN
 {
     mfrc522.PCD_Init();     //Initialisation for RFID
     motor_init();           //Move curtain servo to its home position
+    lcd_init();
+    keypad_init();
 
     for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
 
     printf("\n=== STM32 + ESP-01 -> ThingSpeak ===\n");
 
+    //LCD PRINT BASIC MESSAGES
+
+    lcd_write_cmd(0x80);			// Move cursor to line 1 position 1
+    for (int i = 0; i < (int)strlen(Message1); i++)		//for i amt of char LCD module
+    {
+        outChar = Message1[i];
+        lcd_write_data(outChar); 	// write character data to LCD
+    }
+
+    lcd_write_cmd(0xC0);			// Move cursor to line 2 position 1
+
+    for (int i = 0; i < (int)strlen(Message2); i++)		//for i amt char LCD module
+    {
+        outChar2 = Message2[i];
+        lcd_write_data(outChar2); 	// write character data to LCD
+    }
 
     // Kick off WiFi/ThingSpeak/Telegram on its own thread so it can
     // never block RFID polling below, even during multi-second AT waits.
@@ -871,6 +1039,54 @@ int main(void)
     int rfid = 0;
 
     while (1) {
+
+
+        // ---- Keypad: '1' toggles Blind, '3' toggles Lighting -----
+        if (key_pending) {
+            key_pending = false;
+
+            lcd_write_cmd(0x80);			// Move cursor to line 1 position 1
+            for (int i = 0; i < (int)strlen(Message1); i++)		//for 20 char LCD module
+            {
+                outChar = Message1[i];
+                lcd_write_data(outChar); 	// write character data to LCD
+            }
+
+            lcd_write_cmd(0xC0);			// Move cursor to line 2 position 1
+
+            for (int i = 0; i < (int)strlen(Message2); i++)		//for 20 char LCD module
+            {
+                outChar2 = Message2[i];
+                lcd_write_data(outChar2); 	// write character data to LCD
+            }
+
+            switch (last_key) {
+                case '1':
+                    printf("1 is pressed -- toggling Blind\n");
+                    request_blind_toggle();
+                    break;
+                case '2':
+                    printf("2 is pressed -- Window not wired up yet\n");
+                    // TODO: needs a second servo pin, not yet wired
+                    break;
+                case '3':
+                    printf("3 is pressed -- toggling Lighting\n");
+                    request_lighting_toggle();
+                    break;
+                case '4':
+                    printf("4 is pressed -- Fans not wired up yet\n");
+                    // TODO: needs a 360-degree continuous-rotation servo pin, not yet wired
+                    break;
+                default:
+                    for (int i = 0; i < (int)strlen(Message3); i++)		//for 20 char LCD module
+                    {
+                        outChar3 = Message3[i];
+                        lcd_write_data(outChar3); 	// write character data to LCD
+                    }
+                    break;
+            }
+        }
+
         // ---- RFID read every loop iteration (every 10ms) --------
         rfid = read_RFID();
         set_latest_rfid(rfid);
@@ -885,6 +1101,8 @@ int main(void)
             led_Blue = 0;
             led_Red  = 1;
         }
+
+
 
         thread_sleep_for(10);   // 10ms yield
     }

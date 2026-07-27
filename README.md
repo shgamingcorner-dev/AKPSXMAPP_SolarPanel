@@ -78,9 +78,37 @@ is why it's the current host.
   - Reduced AT command timeouts throughout the network task (TCP connect: 5000ms→2000-3000ms, 
     CIPSEND prompt: 2000ms→1000ms, data send: 5000ms→3000ms, close: 1000-2000ms→500-1000ms)
   - Implemented polling-based `esp_read()` instead of blocking sleeps, eliminating unnecessary wait times
+  - `esp_read()`/`at()` now accept optional stop-token substrings (e.g. `"CONNECT"`/`"ERROR"` for
+    `CIPSTART`, `">"` for the `CIPSEND` prompt, `"CLOSED"` for a finished HTTP response, `"GOT IP"`/
+    `"FAIL"` for `CWJAP`) and return the moment the real, protocol-level marker for that command
+    appears, instead of always waiting out the full timeout. An earlier attempt at this used a
+    blind "quiet gap" heuristic instead of checking for the actual marker — that broke `CIPSTART`
+    and `CWJAP`, whose real reply can lag behind the command echo by more than the gap threshold,
+    so the response ended up read by the *next* command instead. The stop-token approach replaced
+    it because it can only ever return once the expected content has actually arrived.
   - Parallelized ThingSpeak and Supabase telemetry transmissions (they now run concurrently instead of sequentially)
   - Reduced network task idle polling from 50ms to 10ms for better responsiveness
   - These changes reduce typical network transaction times from 8-16 seconds to 2-4 seconds on stable networks
+- **DHT11 reliability fixes** (`DHT11.cpp`):
+  - `read_temperature()`/`read_humidity()` used to each trigger their own independent
+    `readRawData()` transaction — two full sensor reads per cycle instead of one. `main.cpp` now
+    calls a single combined `read_dht11()` (using `readTemperatureHumidity()`) once per cycle and
+    caches the result, halving bus traffic and, on a failed read, keeping the last good reading
+    instead of reverting to the invalid fallback sentinel (which was causing every Supabase
+    telemetry write to 400, since the sentinel exceeds the `NUMERIC(4,2)` column limit).
+  - The sensor ACK wait and all 40 data bits now run inside a `CriticalSectionLock`, so
+    `networkThread`'s UART activity can't preempt mid-bit and desync the bit-bang timing.
+  - The two bit-read loops (`while(pin==0);` / `while(pin==1);`) had no timeout at all and could
+    hang forever on a glitched bit — replaced with a bounded `wait_for_level()` helper (200us cap).
+  - The pin is switched to input mode to await the sensor's ACK but was never given a pull mode
+    (`PullNone` by default), leaving it floating with no defined level if the external pull-up
+    resistor is missing or too weak. Added `pin_DHT11.mode(PullUp)` to bias it via the MCU's
+    internal pull-up as a backup.
+  - Despite all of the above, the DHT11 has continued to time out on every single read in testing
+    so far — a hardware-level problem is suspected (missing/weak pull-up resistor if this is a bare
+    4-pin sensor rather than a breakout module, a wiring/continuity issue on `PA_1`, or the same
+    shared-power-rail instability noted below affecting `DHT11VCC` on `PB_0`) and hasn't been ruled
+    out yet.
 
 ## What is still to be done
 
