@@ -16,13 +16,20 @@
 #include "mbed.h"
 #include "keypad.h"
 
-//declare the Keypad Data input pins as an object of BusIn
-//You can have up to 16 pins in a Bus.
-//The order of pins in the constructor is the reverse order of the pins in the byte order.
-//If you have BusIn(a,b,c,d,e,f,g,h)
-//then the order of bits in the byte would be hgfedcba
-//with a being bit 0, b being bit 1, c being bit 2 and so on.
-static BusIn Keypad_Data(PB_8, PB_9, PB_10, PB_11);
+// The four keypad data lines are deliberately NOT a BusIn: BusIn::read()
+// takes a PlatformMutex internally, and taking a mutex inside an ISR is
+// illegal -- mbed traps it at runtime with
+//   "Mutex: 0x........, Not allowed in ISR context"
+// and halts the board. DigitalIn::read() is a bare gpio_read() that the
+// driver documents as "Thread safe / atomic HAL call", so it is safe to
+// call from the DA interrupt handler below.
+//
+// Bit order matches the BusIn convention this replaces -- BusIn(a,b,c,d)
+// maps a to bit 0, b to bit 1, and so on.
+static DigitalIn Keypad_D0(PB_8);
+static DigitalIn Keypad_D1(PB_9);
+static DigitalIn Keypad_D2(PB_10);
+static DigitalIn Keypad_D3(PB_11);
 
 static InterruptIn Keypad_DA(PB_13); //74C922 DA output
 
@@ -33,13 +40,19 @@ volatile char last_key = 0;
 
 static void on_key_ready(void)
 {
-    unsigned char keycode = Keypad_Data & Keypad_Data.mask();
-    last_key = lookupTable[keycode];
+    unsigned char keycode = (unsigned char)((Keypad_D0.read()     )
+                                          | (Keypad_D1.read() << 1)
+                                          | (Keypad_D2.read() << 2)
+                                          | (Keypad_D3.read() << 3));
+    last_key = lookupTable[keycode & 0x0F]; // mask keeps the index inside the 16-entry table
     key_pending = true;
 }
 
 void keypad_init(void)
 {
-    Keypad_Data.mode(PullNone);
+    Keypad_D0.mode(PullNone);
+    Keypad_D1.mode(PullNone);
+    Keypad_D2.mode(PullNone);
+    Keypad_D3.mode(PullNone);
     Keypad_DA.rise(&on_key_ready);
 }
