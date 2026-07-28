@@ -52,7 +52,7 @@ char Message3 [ ] = "Invalid try again";
 #define SS_PIN  PB_2
 #define ESP_TX  PC_10
 #define ESP_RX  PC_11
-#define DHT11_PIN PA_1
+#define DHT11_PIN PC_4
 
 
 // ACS712 20A current sensor -- OUT goes through a 10k/15k divider (0.6 ratio)
