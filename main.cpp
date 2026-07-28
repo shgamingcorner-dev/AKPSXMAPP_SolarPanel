@@ -433,8 +433,8 @@ static bool send_to_thingspeak(void)
     // 1. Open TCP
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=0,\"TCP\",\"%s\",%d\r\n", TS_HOST, TS_PORT);
-    at(g_tx, 2000, "CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+    at(g_tx, 2000, ",CONNECT", "ERROR"); // Reduced from 5000
+    if (!strstr(g_rx, ",CONNECT")) {
         printf("[TS] TCP open failed\n");
         return false;
     }
@@ -492,8 +492,8 @@ static bool send_telegram_via_relay(const char *message)
     // Connection id 1 — id 0 is used by send_to_thingspeak()
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=1,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, "CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+    at(g_tx, 3000, ",CONNECT", "ERROR"); // Reduced from 5000
+    if (!strstr(g_rx, ",CONNECT")) {
         printf("[TG] TCP open failed\n");
         return false;
     }
@@ -561,8 +561,8 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=2,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, "CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+    at(g_tx, 3000, ",CONNECT", "ERROR"); // Reduced from 5000
+    if (!strstr(g_rx, ",CONNECT")) {
         printf("[SB] TCP open failed\n");
         return false;
     }
@@ -616,8 +616,8 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     // Connection id 3 -- ids 0-2 are ThingSpeak/Telegram/telemetry
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=3,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, "CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+    at(g_tx, 3000, ",CONNECT", "ERROR"); // Reduced from 5000
+    if (!strstr(g_rx, ",CONNECT")) {
         printf("[SB] TCP open failed\n");
         return false;
     }
@@ -675,8 +675,8 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, "CONNECT", "ERROR");
-    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+    at(g_tx, 3000, ",CONNECT", "ERROR");
+    if (!strstr(g_rx, ",CONNECT")) {
         printf("[DS] TCP open failed\n");
         return false;
     }
@@ -760,8 +760,8 @@ static bool poll_device_state_via_relay(void)
     // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
     snprintf(g_tx, sizeof(g_tx),
         "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, "CONNECT", "ERROR");
-    if (!strstr(g_rx, "OK") && !strstr(g_rx, "CONNECT")) {
+    at(g_tx, 3000, ",CONNECT", "ERROR");
+    if (!strstr(g_rx, ",CONNECT")) {
         printf("[DS] TCP open failed\n");
         return false;
     }
@@ -853,6 +853,12 @@ static void wifi_reconnect(void)
     if (strstr(g_rx, "GOT IP")) {
         wifi_connected = true;
         printf("[WIFI] Reconnected!\n");
+        // "GOT IP" means the join finished, but the module keeps working for
+        // a moment afterwards -- firing AT+CIPSTART immediately lands while
+        // it is still busy, which comes back as "busy p..." and leaves the
+        // socket unopened even though an "OK" shows up in the buffer. The
+        // same 2s settle esp_init() already takes after its own CWJAP.
+        thread_sleep_for(2000);
     } else {
         wifi_connected = false;
         printf("[WIFI] Reconnect failed, will retry\n");
