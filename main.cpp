@@ -331,8 +331,26 @@ static ts_field_t ts_fields[TS_NUM_FIELDS] = {
 //  ESP-01 LOW-LEVEL  (all called only from the network task)
 
 
+// Throw away anything still sitting in the UART before issuing a new
+// command. Because esp_read() returns the moment its stop token appears, a
+// response's trailing bytes are often left behind -- e.g. CWJAP's "OK"
+// arrives after the "GOT IP" we stopped on. Left in place, the NEXT
+// command's read picks up that stale text, matches its own stop token
+// against it immediately, and returns before its real reply arrives. Every
+// read after that is answering the previous command: the whole pipeline
+// slips by one and never recovers. Anything pending before we transmit is
+// by definition stale, so dropping it is always safe.
+static void esp_drain(void)
+{
+    char scratch[64];
+    while (esp.readable()) {
+        if (esp.read(scratch, sizeof(scratch)) <= 0) break;
+    }
+}
+
 static void esp_send(const char *cmd)
 {
+    esp_drain();
     esp.write(cmd, strlen(cmd));
     led_tx = !led_tx;
 }
@@ -841,28 +859,20 @@ static void esp_init(void)
     printf("=== ESP-01 ready ===\n");
 }
 
-// rejoins wifi after the AP drops the connection mid-session
+// Recovers the link after repeated send failures.
+//
+// This deliberately re-runs the WHOLE init rather than just AT+CWJAP. The
+// ESP-01 watchdog-resets on its own fairly often here (the boot banner
+// reports "rst cause:4 / wdt reset"), and a reset silently drops CIPMUX
+// back to 0. In single-connection mode every "AT+CIPSTART=<id>,..." is
+// rejected with "Link type ERROR" and "AT+CIPCLOSE=<id>" answers "MUX=0",
+// so a CWJAP-only reconnect rejoins the AP and still cannot open a single
+// socket -- the board never recovers until it is power-cycled. Re-running
+// esp_init() restores CWMODE and CIPMUX along with the join.
 static void wifi_reconnect(void)
 {
     printf("[WIFI] Reconnecting...\n");
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
-    esp_send(g_tx);
-    esp_read(8000, "GOT IP", "FAIL"); // Reduced from 12000 -- exits as soon as the real join result is known
-
-    if (strstr(g_rx, "GOT IP")) {
-        wifi_connected = true;
-        printf("[WIFI] Reconnected!\n");
-        // "GOT IP" means the join finished, but the module keeps working for
-        // a moment afterwards -- firing AT+CIPSTART immediately lands while
-        // it is still busy, which comes back as "busy p..." and leaves the
-        // socket unopened even though an "OK" shows up in the buffer. The
-        // same 2s settle esp_init() already takes after its own CWJAP.
-        thread_sleep_for(2000);
-    } else {
-        wifi_connected = false;
-        printf("[WIFI] Reconnect failed, will retry\n");
-    }
+    esp_init();
 }
 
 
