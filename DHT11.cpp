@@ -39,19 +39,6 @@ void DHT11::setDelay(unsigned long delay)
  *          Returns DHT11::ERROR_TIMEOUT if the sensor does not respond or communication times out.
  *          Returns DHT11::ERROR_CHECKSUM if the data is read but the checksum does not match.
  */
-// Bit-level phases are on the order of 30-70us per the DHT11 spec, so a
-// bounded busy-wait counting 1us steps gives ample margin without depending
-// on the millisecond Timer (which would need interrupts left enabled).
-static bool wait_for_level(DigitalInOut &pin, int level, int timeout_us)
-{
-    for (int waited = 0; waited < timeout_us; waited++)
-    {
-        if (pin == level) return true;
-        wait_us(1);
-    }
-    return false;
-}
-
 int DHT11::readRawData(byte data[5])
 {
     //declare the pin as Digital In/Out pin
@@ -59,7 +46,7 @@ int DHT11::readRawData(byte data[5])
     pin_DHT11.output(); //set as output pin
     pin_DHT11 = 1;      //intial state: set pin as HIGH
     thread_sleep_for(_delayMS);
-
+      
     pin_DHT11 = 0;      //start signal to the DHT11
     //thread_sleep_for(18);
     thread_sleep_for(20); //keep the LOW signal a bit longer than 18ms
@@ -68,81 +55,69 @@ int DHT11::readRawData(byte data[5])
     wait_us(30);          //wait for 30us, max is 40us per the spec
 
     pin_DHT11.input();     //set the pin as input and wait for DHT11 pulling down the signal
-    pin_DHT11.mode(PullUp); // bias the line HIGH via the MCU's internal pull-up while
-                            // nothing else is driving it -- without this the pin was
-                            // left floating (PullNone) the whole time we wait for the
-                            // sensor's ACK, so a missing/weak external pull-up resistor
-                            // meant the line had no defined level to transition from
 
-    // The whole time-sensitive exchange (from the sensor's ack pulse through
-    // the 40 data bits) runs with the scheduler locked so networkThread's
-    // UART activity can't preempt us mid-bit and desync the timing -- this
-    // was silently corrupting reads once the network thread became busy.
-    int result = DHT11::ERROR_TIMEOUT;
+    t.reset();              //reset the timer
+    int timeout_start = duration_cast<milliseconds> (t.elapsed_time()).count(); //get the starting time
+
+    while (pin_DHT11 == 1) //check the pin signal level with timer out: 1000ms
     {
-        CriticalSectionLock lock;
-
-        t.reset();
-        int timeout_start = duration_cast<milliseconds> (t.elapsed_time()).count();
-        bool acked = false;
-        while (pin_DHT11 == 1) //check the pin signal level with timer out: 1000ms
+        if ( ( duration_cast<milliseconds> (t.elapsed_time()).count() - timeout_start ) > TIMEOUT_DURATION)
         {
-            if ( ( duration_cast<milliseconds> (t.elapsed_time()).count() - timeout_start ) > TIMEOUT_DURATION)
-            {
-                acked = false;
-                break;
-            }
-            acked = true;
+            printf ("return Error 1\n");
+            return DHT11::ERROR_TIMEOUT;
         }
+    }
 
-        if (acked && pin_DHT11 == 0)
+    if (pin_DHT11 == 0)
+    {
+        wait_us(80);
+        if (pin_DHT11 == 1)
         {
             wait_us(80);
-            if (pin_DHT11 == 1)
+            for (int i = 0; i < 5; i++)
             {
-                wait_us(80);
-                bool bit_timeout = false;
-
-                for (int i = 0; i < 5 && !bit_timeout; i++)
+                //read byte
                 {
                     byte value = 0;
 
-                    for (int bit = 0; bit < 8 && !bit_timeout; bit++)
+                    for (int i = 0; i < 8; i++)
                     {
-                        if (!wait_for_level(pin_DHT11, 1, 200)) { bit_timeout = true; break; }
+                        while (pin_DHT11 == 0);
 
                         wait_us(30);
-
+                        //wait_us(20);
+                
                         if (pin_DHT11 == 1)
                         {
-                            value |= (1 << (7 - bit));
+                            value |= (1 << (7 - i));
                         }
+                        while (pin_DHT11 == 1);
 
-                        if (!wait_for_level(pin_DHT11, 0, 200)) { bit_timeout = true; break; }
                     }
 
                     data[i] = value;
                 }
 
-                if (bit_timeout)
+                if (data[i] == DHT11::ERROR_TIMEOUT)
                 {
-                    result = DHT11::ERROR_TIMEOUT;
+                    printf ("return error 2\n");
+                    return DHT11::ERROR_TIMEOUT;
                 }
-                else if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
-                {
-                    result = 0; // Success
-                }
-                else
-                {
-                    result = DHT11::ERROR_CHECKSUM;
-                }
+            }
+
+            if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
+            {
+                return 0; // Success
+            }
+            else
+            {
+                printf ("return error 3\n");
+                return DHT11::ERROR_CHECKSUM;
             }
         }
     }
-
-    if (result == DHT11::ERROR_TIMEOUT) printf("DHT11 error: timeout\n");
-    else if (result == DHT11::ERROR_CHECKSUM) printf("DHT11 error: checksum mismatch\n");
-    return result;
+    printf ("return 4\n");
+    return DHT11::ERROR_TIMEOUT;
 }
 
 
