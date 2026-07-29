@@ -60,8 +60,10 @@ is why it's the current host.
   recalibrate `ACS712_ZERO_V` in `main.cpp` to the value you actually measure — sensor offset and
   divider resistor tolerance both shift this slightly from the ideal 1.5V.
 - **Command Center Phase 1**: `poll_device_state_via_relay()` polls the relay's `GET /device-state`
-  route every `DEVICE_STATE_POLL_MS` (7s) and drives `led_mainLighting` (`PC_4`) to match the
-  dashboard's `main_lighting` toggle in Supabase, only writing the pin on an actual value change.
+  route every `DEVICE_STATE_POLL_MS` (7s) and drives `led_mainLighting` (`MAIN_LIGHT_PIN`,
+  currently `PC_2`) and the blind servo (`PA_7`) to match the dashboard's `main_lighting` and
+  `blind` toggles in Supabase, only actuating on an actual value change. The keypad can drive
+  the same two devices from the hardware side — see below.
 - **Telegram alerts**: fires on RFID scan via the relay's `/telegram` route, rate-limited by
   `TG_COOLDOWN_MS`.
 - **Supabase bridge**: sensor readings and RFID alerts are also pushed to Supabase
@@ -89,33 +91,88 @@ is why it's the current host.
   - Parallelized ThingSpeak and Supabase telemetry transmissions (they now run concurrently instead of sequentially)
   - Reduced network task idle polling from 50ms to 10ms for better responsiveness
   - These changes reduce typical network transaction times from 8-16 seconds to 2-4 seconds on stable networks
-- **DHT11 reliability fixes** (`DHT11.cpp`):
-  - `read_temperature()`/`read_humidity()` used to each trigger their own independent
-    `readRawData()` transaction — two full sensor reads per cycle instead of one. `main.cpp` now
-    calls a single combined `read_dht11()` (using `readTemperatureHumidity()`) once per cycle and
-    caches the result, halving bus traffic and, on a failed read, keeping the last good reading
-    instead of reverting to the invalid fallback sentinel (which was causing every Supabase
-    telemetry write to 400, since the sentinel exceeds the `NUMERIC(4,2)` column limit).
-  - The sensor ACK wait and all 40 data bits now run inside a `CriticalSectionLock`, so
-    `networkThread`'s UART activity can't preempt mid-bit and desync the bit-bang timing.
-  - The two bit-read loops (`while(pin==0);` / `while(pin==1);`) had no timeout at all and could
-    hang forever on a glitched bit — replaced with a bounded `wait_for_level()` helper (200us cap).
-  - The pin is switched to input mode to await the sensor's ACK but was never given a pull mode
-    (`PullNone` by default), leaving it floating with no defined level if the external pull-up
-    resistor is missing or too weak. Added `pin_DHT11.mode(PullUp)` to bias it via the MCU's
-    internal pull-up as a backup.
-  - Despite all of the above, the DHT11 has continued to time out on every single read in testing
-    so far — a hardware-level problem is suspected (missing/weak pull-up resistor if this is a bare
-    4-pin sensor rather than a breakout module, a wiring/continuity issue on `PA_1`, or the same
-    shared-power-rail instability noted below affecting `DHT11VCC` on `PB_0`) and hasn't been ruled
-    out yet.
+- **DHT11: the sensor was on the wrong pin.** After a long hunt through the driver
+  (critical sections, pull-ups, bit-loop timeouts — all of it reverted, see below), the actual
+  cause was mundane: `DHT11_PIN` was `PA_1` while the sensor's DATA line is physically on
+  `PC_4`. Every read timed out because nothing was ever connected to the pin being read.
+  Changing the define fixed it outright, and `DHT11.cpp` is now back to the stock library.
+  The lesson is the one already recorded further down this file, re-learned the hard way:
+  when a subsystem fails *100%* of the time rather than intermittently, suspect wiring or
+  configuration before logic — a real timing bug is almost never that consistent.
+- **Keypad is interrupt-driven** (`keypad_utilities.cpp` / `keypad.h`): the 74C922's DA line
+  is an `InterruptIn`, and its handler only reads the 4 data bits and sets a flag. Two traps
+  worth knowing if this code is ever extended:
+  - The data pins are four separate `DigitalIn`s, deliberately **not** a `BusIn`.
+    `BusIn::read()` takes a `PlatformMutex` internally, and taking a mutex in ISR context is
+    illegal under Mbed — it halts the board with `Mutex: Not allowed in ISR context` on the
+    first keypress. `DigitalIn::read()` is a bare `gpio_read()` and is safe.
+  - Mbed's `InterruptIn` callbacks run in **true ISR context**, not on a helper thread. No
+    printf, no mutex, no blocking calls. The keypress is handed to `network_task()` through a
+    mutex-protected flag, and the mutex is only ever taken on the main thread.
+- **ESP-01 AT-command robustness** (`main.cpp`): several failures that all presented as
+  "the network is broken" turned out to be protocol handling:
+  - `esp_read()` returns as soon as its stop token appears, which left the tail of each
+    response in the UART. The next command then consumed that stale text, matched its own
+    stop token against it, and returned before its real reply arrived — after which *every*
+    read was answering the previous command. `esp_drain()` now clears pending bytes before
+    each transmit; anything buffered before we send is stale by definition.
+  - A bare `OK` was accepted as a successful `AT+CIPSTART`. It proves nothing — after a
+    reconnect the module replies `busy p...` then a stray `OK` with no socket open, and the
+    code charged on into `CIPSEND` and got `link is not valid`. Success now requires
+    `,CONNECT` (the leading comma matters: it excludes `ALREADY CONNECTED`).
+  - Failed opens now always close their connection id. Without that, a socket that opened
+    just after the timeout stayed open, the next attempt got `ALREADY CONNECTED`, was
+    rejected, and returned without closing again — wedging that id permanently.
+  - `wifi_reconnect()` re-runs the whole init instead of just `AT+CWJAP`. The ESP-01
+    watchdog-resets on its own here (`rst cause:4`), and a reset silently drops `CIPMUX`
+    back to 0, where every `AT+CIPSTART=<id>,...` is rejected with `Link type ERROR` and
+    `AT+CIPCLOSE=<id>` answers `MUX=0`. A CWJAP-only reconnect rejoined the AP and still
+    could not open a single socket until the board was power-cycled.
+  - `esp_open_tcp()` retries once against `RELAY_IP` if the hostname fails. The ESP's DNS
+    resolver is slow and unreliable, especially right after a reset clears its cache, and a
+    failed lookup is indistinguishable from a dead server from the firmware's side. Requests
+    still send `Host: RELAY_HOST` so virtual hosting is unaffected. **This is a fallback, not
+    the default** — if the log shows the IP path being taken every time, the hostname is
+    genuinely broken, and if PythonAnywhere renumbers, `RELAY_IP` needs re-resolving.
+- **DHT11: one change kept, in `main.cpp` (not the driver).** `read_temperature()` and
+  `read_humidity()` each used to trigger their own independent `readRawData()` transaction —
+  two full sensor reads per cycle. A single combined `read_dht11()` (using
+  `readTemperatureHumidity()`) now runs once per cycle and caches the result, halving bus
+  traffic and, on a failed read, keeping the last good reading rather than falling back to the
+  sentinel values. That matters because the sentinels (`2634`/`4001`) exceed the
+  `NUMERIC(4,2)` limit on the Supabase columns, so every failed DHT11 read used to take the
+  telemetry write down with it — one broken sensor silently 400'd an unrelated subsystem.
+- **DHT11 driver changes that were tried and reverted** — `DHT11.cpp` is stock. Listed so they
+  are not attempted again, since each looked plausible and each was wrong:
+  - Wrapping the ACK wait and 40 data bits in a `CriticalSectionLock`, on the theory that
+    `networkThread` was preempting the bit-bang. The failure rate did not move (100% before,
+    100% after), which disproved it. Worse, it disabled interrupts for ~4-5ms, and the
+    STM32F103's USART has a **1-byte** hardware buffer — so it was actively dropping ESP-01
+    bytes and corrupting an unrelated subsystem to fix a non-problem.
+  - Replacing the unbounded `while (pin == 0);` bit loops with a bounded helper. Defensible in
+    isolation (they genuinely can hang), but the restructuring introduced an inverted flag: the
+    ACK-wait loop only set `acked = true` *inside* its body, so when the sensor answered
+    quickly — the normal, healthy case — the loop never executed and the read was reported as a
+    timeout. Success was impossible. **The better the sensor, the more reliably it failed.**
+  - Adding `pin_DHT11.mode(PullUp)`. Harmless and arguably correct, but it changed nothing,
+    because the pin being biased was not the pin the sensor was attached to.
 
 ## What is still to be done
 
-- **Other device-state fields.** Only `main_lighting` is polled and acted on so far. The
-  `DeviceState` type in the frontend also has `gateServo`, `hvacPower`, `smartLock`, and
-  `securityArmState` — none of these have a corresponding actuator or relay route on the hardware
-  side yet.
+- **Other device-state fields.** `main_lighting` and `blind` are polled, actuated, and
+  writable from the keypad. The `DeviceState` type in the frontend also has `hvacPower`,
+  `smartLock`, and `securityArmState` — none have a corresponding actuator or relay route on
+  the hardware side yet. LCD menu items `2.Window` and `4.Fans` are stubbed in the keypad
+  handler for the same reason: no second servo or fan output is wired.
+- **`gate_servo` was renamed to `blind`** across Supabase, the relay, the frontend, and the
+  firmware — "gate" was never an accurate name for a window blind. If you find a `gate_servo`
+  or `gateServo` reference anywhere, it is stale.
+- **ACS712 still needs calibrating.** It reads roughly 0.5-5 A at rest and the pin voltage
+  wanders between ~1.5 V and ~1.8 V, so the noise alone is worth several amps. `ACS712_ZERO_V`
+  is still the *theoretical* 1.5 V rather than a measured one. Measure the resting `pin=X.XV`
+  from the debug line with genuinely zero current flowing and set the constant to that. The
+  wander itself is worth investigating separately — it points at the same shared-rail
+  instability as the ESP-01 resets.
 - **WiFi instability under load.** Serial logs show `WIFI DISCONNECT` happening frequently, often
   right around an RFID scan — most likely the ESP-01 and MFRC522 briefly drawing current spikes at
   the same time and browning out a shared, under-rated power supply. The auto-reconnect logic

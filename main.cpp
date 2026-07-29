@@ -18,6 +18,11 @@
 
 //  relay server for HTTPS Bridging requests
 #define RELAY_HOST    "shgam.pythonanywhere.com"  // no https://, no trailing slash
+// Only used if the hostname fails to resolve -- see esp_open_tcp(). Requests
+// still send "Host: RELAY_HOST", so PythonAnywhere routes them correctly.
+// PythonAnywhere can renumber this, so it is a fallback, never the default:
+// if the log ever shows the IP path being used every time, re-resolve it.
+#define RELAY_IP      "35.173.69.207"
 #define RELAY_PORT    80
 #define RELAY_SECRET  "ab805d0429869cfc507b54bd1921a2ae"     // must match RELAY_SECRET on the relay
 
@@ -423,6 +428,63 @@ static void at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, co
     esp_read(wait_ms, stop1, stop2);
 }
 
+// Closes a connection id without caring whether it was actually open.
+static void esp_close(int id)
+{
+    char cmd[24];
+    snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE=%d\r\n", id);
+    at(cmd, 500, "OK", "ERROR");
+}
+
+// Opens a TCP socket on `id`, returning true only when the module actually
+// reports "<id>,CONNECT". A bare "OK" is not proof of anything: after a
+// reconnect the module answers "busy p..." then a stray OK while the socket
+// stays shut, which used to send us charging into CIPSEND and getting
+// "link is not valid".
+//
+// On failure the id is always closed again. That matters more than it looks:
+// if the socket opens just *after* we time out, an unclosed link answers the
+// next CIPSTART with "ALREADY CONNECTED" -- which is not ",CONNECT", so we
+// would reject it and leave without closing once more, wedging that id
+// permanently.
+//
+// If `ip_fallback` is given, a failed hostname attempt is retried once
+// against the literal IP. The ESP-01's DNS resolver is slow and unreliable,
+// particularly right after a reset has cleared its cache, and from here a
+// failed lookup is indistinguishable from a dead server. The HTTP request
+// still sends "Host: <hostname>", so name-based virtual hosting on the far
+// end keeps working. Which path succeeded is printed, so the serial log says
+// outright whether DNS was the problem.
+static bool esp_open_tcp(int id, const char *host, const char *ip_fallback, int port, const char *tag)
+{
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=%d,\"TCP\",\"%s\",%d\r\n", id, host, port);
+    at(g_tx, 8000, ",CONNECT", "ERROR");
+    if (strstr(g_rx, ",CONNECT")) {
+        return true;
+    }
+
+    printf("%s TCP open failed (%s)\n", tag, host);
+    esp_close(id);
+
+    if (ip_fallback == NULL) {
+        return false;
+    }
+
+    printf("%s retrying via literal IP %s -- bypasses ESP DNS\n", tag, ip_fallback);
+    snprintf(g_tx, sizeof(g_tx),
+        "AT+CIPSTART=%d,\"TCP\",\"%s\",%d\r\n", id, ip_fallback, port);
+    at(g_tx, 8000, ",CONNECT", "ERROR");
+    if (strstr(g_rx, ",CONNECT")) {
+        printf("%s connected via IP -- hostname lookup is what is failing\n", tag);
+        return true;
+    }
+
+    printf("%s IP retry failed too -- not a DNS problem\n", tag);
+    esp_close(id);
+    return false;
+}
+
 // Percent-encode a string for use in a URL query param
 static void urlencode(char *dst, int dst_sz, const char *src)
 {
@@ -448,12 +510,9 @@ static void urlencode(char *dst, int dst_sz, const char *src)
 
 static bool send_to_thingspeak(void)
 {
-    // 1. Open TCP
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CIPSTART=0,\"TCP\",\"%s\",%d\r\n", TS_HOST, TS_PORT);
-    at(g_tx, 2000, ",CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, ",CONNECT")) {
-        printf("[TS] TCP open failed\n");
+    // 1. Open TCP -- no IP fallback needed, ThingSpeak's name resolves fine
+    //    and its address is load balanced, so pinning one would age badly.
+    if (!esp_open_tcp(0, TS_HOST, NULL, TS_PORT, "[TS]")) {
         return false;
     }
 
@@ -508,11 +567,7 @@ static bool send_to_thingspeak(void)
 static bool send_telegram_via_relay(const char *message)
 {
     // Connection id 1 — id 0 is used by send_to_thingspeak()
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CIPSTART=1,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, ",CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, ",CONNECT")) {
-        printf("[TG] TCP open failed\n");
+    if (!esp_open_tcp(1, RELAY_HOST, RELAY_IP, RELAY_PORT, "[TG]")) {
         return false;
     }
 
@@ -577,11 +632,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     int body_len = strlen(body);
 
     // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CIPSTART=2,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, ",CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, ",CONNECT")) {
-        printf("[SB] TCP open failed\n");
+    if (!esp_open_tcp(2, RELAY_HOST, RELAY_IP, RELAY_PORT, "[SB]")) {
         return false;
     }
 
@@ -632,11 +683,7 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     int body_len = strlen(body);
 
     // Connection id 3 -- ids 0-2 are ThingSpeak/Telegram/telemetry
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CIPSTART=3,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, ",CONNECT", "ERROR"); // Reduced from 5000
-    if (!strstr(g_rx, ",CONNECT")) {
-        printf("[SB] TCP open failed\n");
+    if (!esp_open_tcp(3, RELAY_HOST, RELAY_IP, RELAY_PORT, "[SB]")) {
         return false;
     }
 
@@ -691,11 +738,7 @@ static bool send_device_state_via_relay(const char *field, bool value)
         RELAY_SECRET, field, value ? "true" : "false");
     int body_len = strlen(body);
 
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, ",CONNECT", "ERROR");
-    if (!strstr(g_rx, ",CONNECT")) {
-        printf("[DS] TCP open failed\n");
+    if (!esp_open_tcp(4, RELAY_HOST, RELAY_IP, RELAY_PORT, "[DS]")) {
         return false;
     }
 
@@ -776,11 +819,7 @@ static void apply_blind(bool open)
 static bool poll_device_state_via_relay(void)
 {
     // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
-    snprintf(g_tx, sizeof(g_tx),
-        "AT+CIPSTART=4,\"TCP\",\"%s\",%d\r\n", RELAY_HOST, RELAY_PORT);
-    at(g_tx, 3000, ",CONNECT", "ERROR");
-    if (!strstr(g_rx, ",CONNECT")) {
-        printf("[DS] TCP open failed\n");
+    if (!esp_open_tcp(4, RELAY_HOST, RELAY_IP, RELAY_PORT, "[DS]")) {
         return false;
     }
 
