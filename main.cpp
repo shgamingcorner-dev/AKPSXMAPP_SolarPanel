@@ -1013,15 +1013,14 @@ static void network_task(void)
             fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
             snprintf(ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
 
-            // Launch both transmissions CONCURRENTLY
-            bool ts_ok = false;
-            bool sb_ok = false;
-
-            // ThingSpeak (conn ID 0)
-            ts_ok = send_to_thingspeak();
-
-            // Supabase telemetry (conn ID 2) - runs WHILE ThingSpeak is sending
-            sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current);
+            // These run one after the other, not concurrently -- despite what
+            // an older comment here used to claim. send_to_thingspeak()
+            // finishes entirely (CIPCLOSE included) before the Supabase send
+            // begins. Overlapping them would need per-connection buffers and
+            // a "+IPD,<id>," demultiplexer, since both share one UART and one
+            // g_tx/g_rx pair. AT+CIPMUX=1 makes it possible; nothing does it.
+            bool ts_ok = send_to_thingspeak();                 // conn id 0
+            bool sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current); // conn id 2
 
             // Handle results
             if (ts_ok && sb_ok) {

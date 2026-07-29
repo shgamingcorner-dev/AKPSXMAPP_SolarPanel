@@ -46,9 +46,10 @@ is why it's the current host.
 
 ## What has been done
 
-- **WiFi**: joins the configured AP (`WIFI_SSID`/`WIFI_PASSWORD` near the top of `main.cpp`), with
-  auto-reconnect logic that rejoins after 3 consecutive send failures (handles the AP dropping the
-  connection mid-session, since `AT+CWJAP` never auto-retries on its own).
+- **WiFi**: joins the configured AP (`WIFI_SSID`/`WIFI_PASSWORD` near the top of `main.cpp`).
+  After 3 consecutive send failures the board re-runs the *entire* ESP init, not just
+  `AT+CWJAP` — see the reconnect note under AT-command robustness for why a bare rejoin is
+  not enough to recover.
 - **RFID**: reads card/tag UID via the MFRC522, matches against `RFID_UID_CARD`/`RFID_UID_TAG`.
 - **ThingSpeak**: uploads temperature, humidity, current, and RFID state every `SEND_INTERVAL_MS`
   (15s).
@@ -76,21 +77,31 @@ is why it's the current host.
   and the Telegram response check now looks at the HTTP status line instead of searching for
   `"ok":true` in the JSON body, since the 256-byte read buffer can truncate the body before that
   substring appears.
-- **Performance Optimizations**: 
-  - Reduced AT command timeouts throughout the network task (TCP connect: 5000ms→2000-3000ms, 
-    CIPSEND prompt: 2000ms→1000ms, data send: 5000ms→3000ms, close: 1000-2000ms→500-1000ms)
+- **Performance Optimizations**:
+  - Reduced AT command timeouts throughout the network task (CIPSEND prompt: 2000ms→1000ms,
+    data send: 5000ms→3000ms, close: 1000-2000ms→500-1000ms). TCP connect went the *other*
+    way — 5000ms→2000-3000ms and then back up to 8000ms — because a failing DNS lookup takes
+    far longer than a successful connect, and the short timeout was abandoning attempts while
+    the module was still working on them.
   - Implemented polling-based `esp_read()` instead of blocking sleeps, eliminating unnecessary wait times
-  - `esp_read()`/`at()` now accept optional stop-token substrings (e.g. `"CONNECT"`/`"ERROR"` for
-    `CIPSTART`, `">"` for the `CIPSEND` prompt, `"CLOSED"` for a finished HTTP response, `"GOT IP"`/
-    `"FAIL"` for `CWJAP`) and return the moment the real, protocol-level marker for that command
-    appears, instead of always waiting out the full timeout. An earlier attempt at this used a
-    blind "quiet gap" heuristic instead of checking for the actual marker — that broke `CIPSTART`
-    and `CWJAP`, whose real reply can lag behind the command echo by more than the gap threshold,
-    so the response ended up read by the *next* command instead. The stop-token approach replaced
-    it because it can only ever return once the expected content has actually arrived.
-  - Parallelized ThingSpeak and Supabase telemetry transmissions (they now run concurrently instead of sequentially)
+  - `esp_read()`/`at()` accept optional stop-token substrings (`",CONNECT"`/`"ERROR"` for
+    `CIPSTART`, `">"` for the `CIPSEND` prompt, `"CLOSED"` for a finished HTTP response,
+    `"GOT IP"`/`"FAIL"` for `CWJAP`) and return the moment that marker appears instead of
+    waiting out the full timeout. Two earlier attempts at this were wrong, both instructive:
+    - A blind "quiet gap" heuristic (return after 80ms of silence) rather than checking for
+      the actual marker. It cannot tell "the response finished" from "the far end is slow",
+      so it broke `CIPSTART` and `CWJAP`, whose real reply lags the command echo by more than
+      the threshold.
+    - The stop-token version itself, which returns *before consuming the rest of the
+      response*. The leftover tail sat in the UART, the next command's read matched its own
+      stop token against that stale text and returned early, and from then on every read
+      answered the previous command — a permanent off-by-one. Fixed by `esp_drain()`.
   - Reduced network task idle polling from 50ms to 10ms for better responsiveness
-  - These changes reduce typical network transaction times from 8-16 seconds to 2-4 seconds on stable networks
+  - **Note:** ThingSpeak and Supabase telemetry are *not* parallelised, despite a comment in
+    `network_task()` claiming otherwise. `send_to_thingspeak()` runs to completion —
+    `CIPCLOSE` included — before `send_sensor_telemetry_via_relay()` starts. Real concurrency
+    would need per-connection buffers and a `+IPD,<id>,` demultiplexer, since both share one
+    UART and one `g_tx`/`g_rx` pair. `AT+CIPMUX=1` makes it *possible*; nothing implements it.
 - **DHT11: the sensor was on the wrong pin.** After a long hunt through the driver
   (critical sections, pull-ups, bit-loop timeouts — all of it reverted, see below), the actual
   cause was mundane: `DHT11_PIN` was `PA_1` while the sensor's DATA line is physically on
