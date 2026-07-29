@@ -288,6 +288,8 @@ static float read_current(void)
 }
 
 
+//Motor functions
+
 static float motor_init(void)
 {
     motor.period_ms(PERIOD_WIDTH); //period according to the specification, e.g., 20ms
@@ -311,7 +313,31 @@ static float motor_position_to_angle(float pulse_width_us)
 }
 
 
+//LCD functions
 
+static void lcdmessage(const char *MessageS, int Line)
+{
+    if (Line == 1)
+    {
+    lcd_write_cmd(0x80);			// Move cursor to line 1 position 1
+            for (int i = 0; i < (int)strlen(MessageS); i++)		//for 20 char LCD module
+            {
+                outChar = MessageS[i];
+                lcd_write_data(outChar); 	// write character data to LCD
+            }
+    }
+
+    if (Line == 2)
+    {
+            lcd_write_cmd(0xC0);			// Move cursor to line 2 position 1
+
+            for (int i = 0; i < (int)strlen(MessageS); i++)		//for 20 char LCD module
+            {
+                outChar2 = MessageS[i];
+                lcd_write_data(outChar2); 	// write character data to LCD
+            }
+    }
+}
 
 
 //  THINGSPEAK FIELD TABLE
@@ -1099,20 +1125,11 @@ int main(void) //RMAIN
         if (key_pending) {
             key_pending = false;
 
-            lcd_write_cmd(0x80);			// Move cursor to line 1 position 1
-            for (int i = 0; i < (int)strlen(Message1); i++)		//for 20 char LCD module
-            {
-                outChar = Message1[i];
-                lcd_write_data(outChar); 	// write character data to LCD
-            }
+            lcdmessage(Message1, 1); //Message 1
+            lcdmessage(Message2, 2); //Message 2 on second line
 
-            lcd_write_cmd(0xC0);			// Move cursor to line 2 position 1
 
-            for (int i = 0; i < (int)strlen(Message2); i++)		//for 20 char LCD module
-            {
-                outChar2 = Message2[i];
-                lcd_write_data(outChar2); 	// write character data to LCD
-            }
+            
 
             switch (last_key) {
                 case '1':
