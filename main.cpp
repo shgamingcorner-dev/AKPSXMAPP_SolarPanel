@@ -996,7 +996,7 @@ static void network_task(void)
             }
         }
 
-        // ---- ThingSpeak & Supabase telemetry (RUN IN PARALLEL) ----
+        // ---- ThingSpeak & Supabase telemetry ----
         if (now - last_send >= SEND_INTERVAL_MS) {
             last_send = now;
 
