@@ -1131,6 +1131,7 @@ static void network_task(void)
     uint64_t last_device_state_poll = 0;
 
     // If wifi looks dead 3 times rejoin
+    int consecutive_failures = 0;
 
     while (1) {
         uint64_t now = Kernel::get_ms_count();
