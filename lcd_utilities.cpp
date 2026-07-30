@@ -5,6 +5,7 @@
 #undef __ARM_FP
 
 #include "mbed.h"
+#include "config.h"
 #include "lcd.h"	// Include file is located in the project directory
 
 #define DISPLAY_LCD_MASK 0x00000F00 //PORT A1: PA_15 : PA_8, 4-bit mode, using PA_11 : PA_8
@@ -27,34 +28,35 @@ void lcd_write_cmd(unsigned char cmd)
     int tempLCDPort = 0;
 
     LCD_RS = 0;					// Select LCD for command mode
-    wait_us(40);				// 40us delay for LCD to settle down
+    LCD_WR = 0;					// Select LCD for write mode
+    wait_us(40);				// 40us delay for LCD to settle (t_AS = 40ns min, 40us safe)
     temp2 = cmd;
-    temp2 = temp2 >> 4;			// Output upper 4 bits, by shifting out lower 4 bits
+    temp2 = temp2 >> 4;			// Output upper 4 bits
     temp2 = temp2 & 0x0F;
-                        		// Output to PORTD which is connected to LCD
     tempLCDPort = (int) temp2;
     tempLCDPort =  tempLCDPort << 8;
     tempLCDPort = tempLCDPort & 0x00000F00;
     lcdPort = tempLCDPort;
 
+    lcd_strobe();				// Strobe upper nibble
+    wait_us(100);				// Wait between nibbles (enable cycle > 500ns)
 
-    wait_us(10000);			// 10ms - Delay at least 1 ms before strobing
-    lcd_strobe();
-    
-	wait_us(10000);			// 10ms - Delay at least 1 ms after strobing
+    temp2 = cmd;				// Re-initialise temp2
+    temp2 = temp2 & 0x0F;		// Mask out upper 4 bits - get lower nibble
 
-    temp2 = cmd;				// Re-initialise temp2 
-    temp2 = temp2 & 0x0F;		// Mask out upper 4 bits
-    
     tempLCDPort = (int) temp2;
     tempLCDPort =  tempLCDPort << 8;
     tempLCDPort = tempLCDPort & 0x00000F00;
     lcdPort = tempLCDPort;
 
-    wait_us(10000);			// 10ms - Delay at least 1 ms before strobing
-    lcd_strobe();
-    wait_us(10000);			// 10ms - Delay at least 1 ms before strobing
+    lcd_strobe();				// Strobe lower nibble
 
+    // Command-specific delay
+    if (cmd == 0x01 || cmd == 0x02) {
+        wait_us(2000);			// Clear display/return home: 1.52ms min
+    } else {
+        wait_us(50);			// Other commands: ~37us typical
+    }
 }
 
 //---- Function to write a character data to the LCD ---------------------------
@@ -65,6 +67,7 @@ void lcd_write_data(char data)
     int tempLCDPort = 0;
 
     LCD_RS = 1;					// Select LCD for data mode
+    LCD_WR = 0;					// Select LCD for write mode
     wait_us(40);				// 40us delay for LCD to settle down
 
     temp1 = data;
@@ -76,26 +79,18 @@ void lcd_write_data(char data)
     tempLCDPort = tempLCDPort & 0x00000F00;
     lcdPort = tempLCDPort;
 
-	wait_us(10000); 
-   	LCD_RS = 1;
-    wait_us(10000);			//_-_ strobe data in
-
-    lcd_strobe();
-    wait_us(10000);
+    lcd_strobe();				// Strobe upper nibble
+    wait_us(100);				// Wait between nibbles
 
     temp1 = data;
-    temp1 = temp1 & 0x0F;
-    tempLCDPort = (int) temp1;  
+    temp1 = temp1 & 0x0F;		// Get lower nibble
+    tempLCDPort = (int) temp1;
     tempLCDPort =  tempLCDPort << 8;
     tempLCDPort = tempLCDPort & 0x00000F00;
     lcdPort = tempLCDPort;
 
-    wait_us(10000);
-	LCD_RS = 1;
-    wait_us(10000); 			//_-_ strobe data in
-
-    lcd_strobe();	
-    wait_us(10000);
+    lcd_strobe();				// Strobe lower nibble
+    wait_us(50);				// Data write: ~37us typical
 }
 
 
@@ -103,10 +98,10 @@ void lcd_write_data(char data)
 
 void lcd_strobe(void)			// Generate the E pulse
 {
-    LCD_EN = 1;					// E = 0
-    wait_us(10000);			// 10ms delay for LCD_EN to settle
-    LCD_EN = 0;					// E = 1
-    wait_us(10000);			// 10ms delay for LCD_EN to settle
+    LCD_EN = 1;					// E = 1 (enable high)
+    wait_us(1);					// 1-5us pulse width (EN pulse width min 230ns, enable cycle 500ns)
+    LCD_EN = 0;					// E = 0 (enable low - data latched on falling edge)
+    wait_us(1);					// 1-5us hold
 }
 
 

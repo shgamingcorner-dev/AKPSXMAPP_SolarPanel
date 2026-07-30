@@ -266,8 +266,11 @@ public:
 	
 	// Member variables
 	Uid uid;								// Used by PICC_ReadCardSerial().
-	//SPI spi(PinName PB_5, PinName PB_4, PinName PB_3); // mosi, miso, sclk
-	// 
+	SPI _spi;                               // SPI bus for MFRC522 communication
+	DigitalOut _csPin;                      // Chip select pin (active low)
+	PinName _chipSelectPin;                 // Pin connected to MFRC522's NSS (active low)
+	PinName _resetPowerDownPin;             // Pin connected to MFRC522's NRSTPD
+	//
 	/////////////////////////////////////////////////////////////////////////////////////
 	// Functions for setting up
 	/////////////////////////////////////////////////////////////////////////////////////

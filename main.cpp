@@ -7,104 +7,50 @@
 #include <string.h>
 #include <ctype.h>
 #include "DHT11.h"
-#include "lcd.h"	
-#include "keypad.h"	
+#include "lcd.h"
+#include "keypad.h"
+#include "config.h"
 
-//api keys and wifi credentials — change these to your own before compiling
-#define WIFI_SSID        "bye"
-#define WIFI_PASSWORD    "goodbye1"
-#define TS_API_KEY       "WFQQ2K9I14E30IE3" //thinkspeak key
-#define SEND_INTERVAL_MS 15000      // minimum 15s on free tier
+//  DONOTEDIT — no need to edit below this line unless programming your own stuff
 
-//  relay server for HTTPS Bridging requests
-#define RELAY_HOST    "shgam.pythonanywhere.com"  // no https://, no trailing slash
-// Only used if the hostname fails to resolve -- see esp_open_tcp(). Requests
-// still send "Host: RELAY_HOST", so PythonAnywhere routes them correctly.
-// PythonAnywhere can renumber this, so it is a fallback, never the default:
-// if the log ever shows the IP path being used every time, re-resolve it.
-#define RELAY_IP      "35.173.69.207"
-#define RELAY_PORT    80
-#define RELAY_SECRET  "ab805d0429869cfc507b54bd1921a2ae"     // must match RELAY_SECRET on the relay
+#define BUF      256
+#define RX_BUF   512
 
-// thinkspeak field assignment to sensor data
-#define TS_FIELD_TEMPERATURE   1
-#define TS_FIELD_HUMIDITY      2
-#define TS_FIELD_CURRENT       3
-#define TS_FIELD_RFIDQ         4
-// #define TS_FIELD_XnXX      5   // uncomment to add more123
+static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
+static char g_tx[BUF];
+static char g_rx[RX_BUF];
+// 10-byte UID -> 20 hex chars + null = 21 bytes
+static char tagID[21];
 
+// Hardware: Fan servo (360° continuous rotation) + Door lock
+static PwmOut fanServo(FAN_SERVO_PIN);
+static DigitalOut doorLock(DOOR_LOCK_PIN);
 
-//LCD
-unsigned char key2, outChar, outChar2, outChar3;
-unsigned char passWord[] = {'0', '0', '0', '0'};
-char Message1 [ ] = "1.Blind 2.Window";	 
-char Message2 [ ] = "3.Lighting 4.Fans ";
-char Message3 [ ] = "Invalid try again";
-
-// RFID UIDs (change to own before compiling for each card/tag)
-#define RFID_UID_CARD  "15828045"
-#define RFID_UID_TAG   "E09F8E21"
-
-// motor timings
-#define WAIT_TIME_MS_0 2000 //sleep enough time to allow motor to turn to the preferred position
-#define PERIOD_WIDTH 20 //period in ms according to the servo motor datasheet
-#define PULSE_WIDTH_90_DEGREE 2400 //pulse width in us to move to 90 degree position
-#define PULSE_WIDTH_0_DEGREE 1500 //pulse width in us to move to 0 position
-#define PULSE_WIDTH_N_90_DEGREE 600 //pulse width in us to move to -90 degree position
-
-//  HARDWARE PINS
-#define RST_PIN PA_2
-#define SS_PIN  PB_2
-#define ESP_TX  PC_10
-#define ESP_RX  PC_11
-#define DHT11_PIN PC_4
-
-
-// ACS712 20A current sensor -- OUT goes through a 10k/15k divider (0.6 ratio)
-// before this pin, since the sensor runs on 5V but the ADC only tolerates 3.3V.
-#define CURRENT_SENSOR_PIN PA_0
-
+// Original hardware objects (moved from top of file)
 MFRC522             mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 
-PwmOut motor(PA_7);
+PwmOut motor(MOTOR_PIN);
 static DigitalOut led_tx(PB_14);
 static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
-static DigitalOut led_Red(PB_6); //PC_2         
+static DigitalOut led_Red(PB_6);
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 // Keypad's InterruptIn/BusIn live in keypad_utilities.cpp -- keypad_init()
 // attaches the handler; key_pending/last_key (from keypad.h) are read here.
 
-
-// Command Center == mainLighting toggle from the dashboard
-#define MAIN_LIGHT_PIN PC_2   //Main lighting pin REMEMBER::::CHANGE TO PB_6
 static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 
+// LCD
+unsigned char key2, outChar, outChar2, outChar3;
+unsigned char passWord[] = {'0', '0', '0', '0'};
+char Message1 [ ] = "1.Blind 2.Window";
+char Message2 [ ] = "3.Lighting 4.Fans ";
+char Message3 [ ] = "Invalid try again";
 
 DHT11 dht11(DHT11_PIN);
-
-
-//  DONOTEDIT — no need to edit below this line unless programming your own stuff
-
-#define TS_HOST  "api.thingspeak.com"
-#define TS_PORT  80
-#define BUF      256
-// g_rx gets its own, larger size -- BUF is also used for stack-local query/body
-// buffers in the send_* functions (all running on networkThread's 2048-byte
-// stack), so bumping BUF itself would blow the stack. g_rx is a static/global
-// buffer, so growing only it costs static RAM, not stack.
-// This fixes a real overflow: the /device-state response (preamble + IPD
-// header + ~230-byte HTTP response) totals ~274 bytes, over BUF's 255 usable
-// bytes, silently truncating the tail ("main_lighting":true) every time.
-#define RX_BUF   512
-
-static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
-static char g_tx[BUF];
-static char g_rx[RX_BUF];
-static char tagID[9];
 
 
 //  VALUES SHARED BETWEEN THREADS!!
@@ -141,6 +87,134 @@ static Mutex   device_state_mutex;
 static volatile bool pending_blind_toggle = false;
 static volatile bool pending_lighting_toggle = false;
 
+// Blind motor actuation request from network thread -- actual motor movement
+// (which blocks for WAIT_TIME_MS_0) runs on main thread to avoid stalling
+// the network task. This flag is set by network_task() and consumed by main().
+static Mutex   blind_actuate_mutex;
+static volatile bool pending_blind_actuate = false;
+static volatile bool pending_blind_open = false;
+
+// Fan servo (360° continuous) + Door lock state -- shared between threads
+static Mutex   fan_mutex;
+static volatile uint8_t fan_speed = 0;        // 0-100%
+static volatile bool fan_power = false;
+
+static Mutex   door_mutex;
+static volatile bool door_locked = true;      // true = locked (HIGH)
+
+// Network thread requests fan/door actions; main thread applies them
+static Mutex   fan_actuate_mutex;
+static volatile bool pending_fan_actuate = false;
+static volatile uint8_t pending_fan_speed = 0;
+static volatile bool pending_fan_power = false;
+
+static Mutex   door_actuate_mutex;
+static volatile bool pending_door_actuate = false;
+static volatile bool pending_door_locked = false;
+
+static void request_fan_actuate(uint8_t speed, bool power)
+{
+    fan_actuate_mutex.lock();
+    pending_fan_actuate = true;
+    pending_fan_speed = speed;
+    pending_fan_power = power;
+    fan_actuate_mutex.unlock();
+}
+
+static void request_door_actuate(bool locked)
+{
+    door_actuate_mutex.lock();
+    pending_door_actuate = true;
+    pending_door_locked = locked;
+    door_actuate_mutex.unlock();
+}
+
+static bool consume_pending_fan_actuate(uint8_t *out_speed, bool *out_power)
+{
+    fan_actuate_mutex.lock();
+    bool v = pending_fan_actuate;
+    if (v) {
+        *out_speed = pending_fan_speed;
+        *out_power = pending_fan_power;
+        pending_fan_actuate = false;
+    }
+    fan_actuate_mutex.unlock();
+    return v;
+}
+
+static bool consume_pending_door_actuate(bool *out_locked)
+{
+    door_actuate_mutex.lock();
+    bool v = pending_door_actuate;
+    if (v) {
+        *out_locked = pending_door_locked;
+        pending_door_actuate = false;
+    }
+    door_actuate_mutex.unlock();
+    return v;
+}
+
+static void set_fan_speed(uint8_t speed)
+{
+    fan_mutex.lock();
+    fan_speed = speed;
+    fan_mutex.unlock();
+
+    if (fan_power) {
+        // Map 0-100% to 1500-2000 us (neutral to full forward)
+        // Neutral = 1500 us (stop), Full forward = 2000 us
+        uint16_t pulse = FAN_SERVO_NEUTRAL_US + (speed * (FAN_SERVO_MAX_FWD_US - FAN_SERVO_NEUTRAL_US)) / 100;
+        fanServo.pulsewidth_us(pulse);
+    }
+}
+
+static void set_fan_power(bool on)
+{
+    fan_mutex.lock();
+    fan_power = on;
+    fan_mutex.unlock();
+
+    if (on) {
+        set_fan_speed(fan_speed);
+    } else {
+        fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US); // stop
+    }
+}
+
+static void set_door_lock(bool locked)
+{
+    door_mutex.lock();
+    door_locked = locked;
+    door_mutex.unlock();
+
+    doorLock = locked ? DOOR_LOCK_LOCKED : DOOR_LOCK_UNLOCKED;
+}
+
+// Getter functions for network thread
+static uint8_t get_fan_speed(void)
+{
+    fan_mutex.lock();
+    uint8_t v = fan_speed;
+    fan_mutex.unlock();
+    return v;
+}
+
+static bool get_fan_power(void)
+{
+    fan_mutex.lock();
+    bool v = fan_power;
+    fan_mutex.unlock();
+    return v;
+}
+
+static bool get_door_locked(void)
+{
+    door_mutex.lock();
+    bool v = door_locked;
+    door_mutex.unlock();
+    return v;
+}
+
 static void request_blind_toggle(void)
 {
     device_state_mutex.lock();
@@ -165,6 +239,28 @@ static bool consume_pending_blind_toggle(void)
     return v;
 }
 
+// Request blind motor actuation from network thread -- actual movement happens on main thread.
+static void request_blind_actuate(bool open)
+{
+    blind_actuate_mutex.lock();
+    pending_blind_actuate = true;
+    pending_blind_open = open;
+    blind_actuate_mutex.unlock();
+}
+
+// Consume blind actuation request (called from main thread).
+static bool consume_pending_blind_actuate(bool *out_open)
+{
+    blind_actuate_mutex.lock();
+    bool v = pending_blind_actuate;
+    if (v) {
+        *out_open = pending_blind_open;
+        pending_blind_actuate = false;
+    }
+    blind_actuate_mutex.unlock();
+    return v;
+}
+
 static bool consume_pending_lighting_toggle(void)
 {
     device_state_mutex.lock();
@@ -176,10 +272,11 @@ static bool consume_pending_lighting_toggle(void)
 
 static void fmt_float(char *out, int out_sz, float v)
 {
-    int whole = (int)v;
-    int frac  = (int)((v - (float)whole) * 10.0f);
-    if (frac < 0) frac = -frac;
-    snprintf(out, out_sz, "%d.%d", whole, frac);
+    bool neg = v < 0.0f;
+    float abs_v = neg ? -v : v;
+    int whole = (int)abs_v;
+    int frac  = (int)((abs_v - (float)whole) * 10.0f);
+    snprintf(out, out_sz, "%s%d.%d", neg ? "-" : "", whole, frac);
 }
 
 
@@ -190,12 +287,13 @@ static void fmt_float(char *out, int out_sz, float v)
 static bool rfid_readID(void)
 {
     char HexString[3];
-    for (uint8_t i = 0; i < 4; i++) {
+    uint8_t uid_size = mfrc522.uid.size; // Use actual UID size (4, 7, or 10 bytes)
+    for (uint8_t i = 0; i < uid_size && i < 10; i++) {
         sprintf(HexString, "%02X", mfrc522.uid.uidByte[i]);
         tagID[2*i]   = HexString[0];
         tagID[2*i+1] = HexString[1];
     }
-    tagID[8] = '\0';
+    tagID[2*uid_size] = '\0';
     return true;
 }
 
@@ -245,6 +343,7 @@ static void read_dht11(void)
     {
         printf("%s\n", dht11.getErrorString(error));
     }
+    DHT11VCC = 0; // Power off DHT11 after reading to save power
 }
 
 static float read_temperature(void)
@@ -261,9 +360,7 @@ static float read_humidity(void)
 // Zero-current point is VCC/2 (2.5V) at the sensor, scaled to 1.5V at the pin.
 // Adjust ACS712_ZERO_V if measured current reads non-zero with nothing connected
 // -- the sensor's offset and the divider's resistor tolerance both shift this a bit.
-#define ACS712_SENSITIVITY_V_PER_A 0.060f
-#define ACS712_ZERO_V              1.5f
-#define ADC_VREF                   3.3f
+// Constants now defined in config.h
 
 static float read_current(void)
 {
@@ -374,9 +471,15 @@ static ts_field_t ts_fields[TS_NUM_FIELDS] = {
 static void esp_drain(void)
 {
     char scratch[64];
-    while (esp.readable()) {
-        if (esp.read(scratch, sizeof(scratch)) <= 0) break;
-    }
+    int count;
+    do {
+        count = 0;
+        while (esp.readable()) {
+            int r = esp.read(scratch, sizeof(scratch));
+            if (r <= 0) break;
+            count += r;
+        }
+    } while (count > 0);
 }
 
 static void esp_send(const char *cmd)
@@ -447,19 +550,19 @@ static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *st
 //     return n;
 // }
 
-static void at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL)
+static int at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL)
 {
     printf(">> %s", cmd);
     esp_send(cmd);
-    esp_read(wait_ms, stop1, stop2);
+    return esp_read(wait_ms, stop1, stop2);
 }
 
 // Closes a connection id without caring whether it was actually open.
-static void esp_close(int id)
+static bool esp_close(int id)
 {
     char cmd[24];
     snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE=%d\r\n", id);
-    at(cmd, 500, "OK", "ERROR");
+    return at(cmd, 500, "OK", "ERROR") > 0;
 }
 
 // Opens a TCP socket on `id`, returning true only when the module actually
@@ -559,10 +662,8 @@ static bool send_to_thingspeak(void)
 
     // 3. CIPSEND
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=0,%d\r\n", req_len);
-    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
-    if (!strstr(g_rx, ">")) {
-        esp_read(1000, ">", "ERROR");
-        if (!strstr(g_rx, ">")) {
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+        if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[TS] No > prompt\n");
             at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
             return false;
@@ -572,7 +673,10 @@ static bool send_to_thingspeak(void)
     // 4. Send
     printf("[TS] Sending: %s\n", query);
     esp_send(query);
-    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+        at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
+        return false;
+    }
 
     if (strstr(g_rx, "SEND OK") || strstr(g_rx, "200 OK")) {
         printf("[TS] Upload OK\n");
@@ -582,7 +686,7 @@ static bool send_to_thingspeak(void)
 
     // 5. Close
     at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
-    return true;
+    return (strstr(g_rx, "SEND OK") != NULL) || (strstr(g_rx, "200 OK") != NULL);
 }
 
 
@@ -610,10 +714,8 @@ static bool send_telegram_via_relay(const char *message)
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=1,%d\r\n", req_len);
-    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
-    if (!strstr(g_rx, ">")) {
-        esp_read(1000, ">", "ERROR");
-        if (!strstr(g_rx, ">")) {
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+        if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[TG] No > prompt\n");
             at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 1000
             return false;
@@ -622,7 +724,10 @@ static bool send_telegram_via_relay(const char *message)
 
     printf("[TG] Sending: %s\n", query);
     esp_send(query);
-    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+        at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+        return false;
+    }
 
     // Check the HTTP status line, not the JSON body
     if (strstr(g_rx, "200 OK")) {
@@ -632,15 +737,17 @@ static bool send_telegram_via_relay(const char *message)
     }
 
     at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 2000
-    return true;
+    return strstr(g_rx, "200 OK") != NULL;
 }
 
 
 
+#include <atomic>
+
 //  SUPABASE BRIDGE (via the same relay, POST with a form body)
 
 
-static uint32_t g_seq = 0; // 'seq' is a increasing counter that is shared across both calls of the function it just that so the retries is just no op instead of dupe rows
+static std::atomic<uint32_t> g_seq{0}; // 'seq' is an increasing counter shared across send functions to deduplicate retries
 
 
 //SUPABASE
@@ -651,10 +758,17 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     fmt_float(hum_s,  sizeof(hum_s),  humidity);
     fmt_float(pow_s,  sizeof(pow_s),  power);
 
+    uint8_t fan_speed = get_fan_speed();
+    bool fan_power = get_fan_power();
+    bool door_locked = get_door_locked();
+
     char body[BUF];
     snprintf(body, sizeof(body),
-        "secret=%s&temperature=%s&humidity=%s&power=%s&seq=%lu",
-        RELAY_SECRET, temp_s, hum_s, pow_s, (unsigned long)g_seq++);
+        "secret=%s&temperature=%s&humidity=%s&power=%s&fan_speed=%u&fan_power=%s&door_locked=%s&seq=%lu",
+        RELAY_SECRET, temp_s, hum_s, pow_s,
+        fan_speed, fan_power ? "true" : "false",
+        door_locked ? "true" : "false",
+        (unsigned long)g_seq++);
     int body_len = strlen(body);
 
     // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
@@ -675,10 +789,8 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=2,%d\r\n", req_len);
-    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
-    if (!strstr(g_rx, ">")) {
-        esp_read(1000, ">", "ERROR");
-        if (!strstr(g_rx, ">")) {
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+        if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
             at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 1000
             return false;
@@ -687,7 +799,10 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
 
     printf("[SB] Sending telemetry: %s\n", body);
     esp_send(query);
-    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+        at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+        return false;
+    }
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
@@ -726,10 +841,8 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=3,%d\r\n", req_len);
-    at(g_tx, 1000, ">", "ERROR"); // Reduced from 2000
-    if (!strstr(g_rx, ">")) {
-        esp_read(1000, ">", "ERROR");
-        if (!strstr(g_rx, ">")) {
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+        if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
             at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 1000
             return false;
@@ -738,7 +851,10 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 
     printf("[SB] Sending alert: %s\n", body);
     esp_send(query);
-    esp_read(3000, "CLOSED"); // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+        at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+        return false;
+    }
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
@@ -781,10 +897,8 @@ static bool send_device_state_via_relay(const char *field, bool value)
     int req_len = strlen(query);
 
     snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=4,%d\r\n", req_len);
-    at(g_tx, 1000, ">", "ERROR");
-    if (!strstr(g_rx, ">")) {
-        esp_read(1000, ">", "ERROR");
-        if (!strstr(g_rx, ">")) {
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
+        if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[DS] No > prompt\n");
             at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
             return false;
@@ -793,7 +907,10 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
     printf("[DS] Pushing %s=%s\n", field, value ? "true" : "false");
     esp_send(query);
-    esp_read(3000, "CLOSED"); // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+        at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+        return false;
+    }
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[DS] Push OK\n" : "[DS] Unexpected response — check relay logs\n");
@@ -842,6 +959,32 @@ static void apply_blind(bool open)
     printf("[DS] blind -> %s\n", open ? "OPEN" : "CLOSED");
 }
 
+static void apply_fan(uint8_t speed, bool on)
+{
+    fan_mutex.lock();
+    fan_speed = speed;
+    fan_power = on;
+    fan_mutex.unlock();
+
+    if (on) {
+        uint16_t pulse = FAN_SERVO_NEUTRAL_US + (speed * (FAN_SERVO_MAX_FWD_US - FAN_SERVO_NEUTRAL_US)) / 100;
+        fanServo.pulsewidth_us(pulse);
+    } else {
+        fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US);
+    }
+    printf("[DS] fan -> %s, speed %u%%\n", on ? "ON" : "OFF", speed);
+}
+
+static void apply_door_lock(bool locked)
+{
+    door_mutex.lock();
+    door_locked = locked;
+    door_mutex.unlock();
+
+    doorLock = locked ? DOOR_LOCK_LOCKED : DOOR_LOCK_UNLOCKED;
+    printf("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
+}
+
 static bool poll_device_state_via_relay(void)
 {
     // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
@@ -870,7 +1013,10 @@ static bool poll_device_state_via_relay(void)
     }
 
     esp_send(query);
-    esp_read(3000, "CLOSED"); // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+        at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+        return false;
+    }
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     if (ok) {
@@ -885,7 +1031,29 @@ static bool poll_device_state_via_relay(void)
                   || strstr(g_rx, "\"blind\": true") != NULL;
 
         if (!blind_known || blind != last_blind_open) {
-            apply_blind(blind);
+            request_blind_actuate(blind);
+        }
+
+        // Fan state
+        bool fan_power_state = strstr(g_rx, "\"fan_power\":true") != NULL
+                            || strstr(g_rx, "\"fan_power\": true") != NULL;
+        uint8_t fan_speed_state = 0;
+        char *fan_speed_ptr = strstr(g_rx, "\"fan_speed\":");
+        if (fan_speed_ptr) {
+            char *num_start = fan_speed_ptr + strlen("\"fan_speed\":");
+            fan_speed_state = (uint8_t)atoi(num_start);
+        }
+
+        if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
+            request_fan_actuate(fan_speed_state, fan_power_state);
+        }
+
+        // Door lock state
+        bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
+                              || strstr(g_rx, "\"smart_lock\": true") != NULL;
+
+        if (door_locked_state != get_door_locked()) {
+            request_door_actuate(door_locked_state);
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -996,7 +1164,8 @@ static void network_task(void)
         // than waiting for the next poll cycle to notice its own change,
         // then push to Supabase so the dashboard stays in sync.
         if (consume_pending_blind_toggle()) {
-            apply_blind(!last_blind_open);
+            // Request blind actuation on main thread (blocks for ~2s)
+            request_blind_actuate(!last_blind_open);
             if (!send_device_state_via_relay("blind", last_blind_open)) {
                 printf("[WARN] Blind state push failed\n");
                 consecutive_failures++;
@@ -1007,6 +1176,32 @@ static void network_task(void)
             apply_main_lighting(!last_main_lighting);
             if (!send_device_state_via_relay("main_lighting", last_main_lighting)) {
                 printf("[WARN] Lighting state push failed\n");
+                consecutive_failures++;
+            }
+        }
+
+        // ---- Fan/Door Lock state changes from keypad ----
+        uint8_t fan_speed_req;
+        bool fan_power_req;
+        if (consume_pending_fan_actuate(&fan_speed_req, &fan_power_req)) {
+            // Request fan actuation on main thread
+            request_fan_actuate(fan_speed_req, fan_power_req);
+            if (!send_device_state_via_relay("fan_speed", fan_speed_req)) {
+                printf("[WARN] Fan speed push failed\n");
+                consecutive_failures++;
+            }
+            if (!send_device_state_via_relay("fan_power", fan_power_req)) {
+                printf("[WARN] Fan power push failed\n");
+                consecutive_failures++;
+            }
+        }
+
+        bool door_locked_req;
+        if (consume_pending_door_actuate(&door_locked_req)) {
+            // Request door lock actuation on main thread
+            request_door_actuate(door_locked_req);
+            if (!send_device_state_via_relay("door_locked", door_locked_req)) {
+                printf("[WARN] Door lock push failed\n");
                 consecutive_failures++;
             }
         }
@@ -1088,6 +1283,12 @@ int main(void) //RMAIN
 {
     mfrc522.PCD_Init();     //Initialisation for RFID
     motor_init();           //Move curtain servo to its home position
+
+    // Fan servo (360° continuous) + Door lock initialization
+    fanServo.period_ms(PERIOD_WIDTH);
+    fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US);  // Start at neutral (stopped)
+    doorLock = DOOR_LOCK_LOCKED;  // Start locked (HIGH = locked)
+
     lcd_init();
     keypad_init();
 
@@ -1145,8 +1346,26 @@ int main(void) //RMAIN
                     request_lighting_toggle();
                     break;
                 case '4':
-                    printf("4 is pressed -- Fans not wired up yet\n");
-                    // TODO: needs a 360-degree continuous-rotation servo pin, not yet wired
+                    printf("4 is pressed -- toggling Fan\n");
+                    // Toggle fan power
+                    fan_mutex.lock();
+                    bool new_fan_power = !fan_power;
+                    fan_mutex.unlock();
+                    request_fan_actuate(fan_speed, new_fan_power);
+                    break;
+                case '5':
+                    printf("5 is pressed -- Fan speed up\n");
+                    // Increase fan speed by 25%
+                    fan_mutex.lock();
+                    uint8_t new_speed = fan_speed + 25;
+                    if (new_speed > 100) new_speed = 100;
+                    fan_mutex.unlock();
+                    request_fan_actuate(new_speed, fan_power);
+                    break;
+                case '6':
+                    printf("6 is pressed -- toggling Door Lock\n");
+                    // Toggle door lock
+                    request_door_actuate(!get_door_locked());
                     break;
                 default:
                     for (int i = 0; i < (int)strlen(Message3); i++)		//for 20 char LCD module
@@ -1156,6 +1375,25 @@ int main(void) //RMAIN
                     }
                     break;
             }
+        }
+
+        // ---- Consume pending blind actuation request from network thread ----
+        bool blind_open_requested;
+        if (consume_pending_blind_actuate(&blind_open_requested)) {
+            apply_blind(blind_open_requested);
+        }
+
+        // ---- Consume pending fan actuation request from network thread ----
+        uint8_t fan_speed_req;
+        bool fan_power_req;
+        if (consume_pending_fan_actuate(&fan_speed_req, &fan_power_req)) {
+            apply_fan(fan_speed_req, fan_power_req);
+        }
+
+        // ---- Consume pending door lock actuation request from network thread ----
+        bool door_locked_req;
+        if (consume_pending_door_actuate(&door_locked_req)) {
+            apply_door_lock(door_locked_req);
         }
 
         // ---- RFID read every loop iteration (every 10ms) --------

@@ -82,16 +82,30 @@ int DHT11::readRawData(byte data[5])
 
                     for (int i = 0; i < 8; i++)
                     {
-                        while (pin_DHT11 == 0);
+                        // Wait for rising edge with timeout (~50us max per DHT11 spec)
+                        uint64_t bit_timeout = duration_cast<microseconds>(t.elapsed_time()).count() + 100;
+                        while (pin_DHT11 == 0) {
+                            if (duration_cast<microseconds>(t.elapsed_time()).count() > bit_timeout) {
+                                printf("return bit timeout rising\n");
+                                return DHT11::ERROR_TIMEOUT;
+                            }
+                        }
 
                         wait_us(30);
                         //wait_us(20);
-                
+
                         if (pin_DHT11 == 1)
                         {
                             value |= (1 << (7 - i));
                         }
-                        while (pin_DHT11 == 1);
+                        // Wait for falling edge with timeout (~70us max per DHT11 spec)
+                        bit_timeout = duration_cast<microseconds>(t.elapsed_time()).count() + 120;
+                        while (pin_DHT11 == 1) {
+                            if (duration_cast<microseconds>(t.elapsed_time()).count() > bit_timeout) {
+                                printf("return bit timeout falling\n");
+                                return DHT11::ERROR_TIMEOUT;
+                            }
+                        }
 
                     }
 
