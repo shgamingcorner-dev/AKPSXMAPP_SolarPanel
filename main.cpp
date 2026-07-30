@@ -1127,14 +1127,10 @@ static void network_task(void)
 
     uint64_t last_send    = 0;
     uint64_t last_tg_send = 0;
-    const uint64_t TG_COOLDOWN_MS = 5000; // 5 sec for testing — raise back to 60000 later
 
     uint64_t last_device_state_poll = 0;
-    const uint64_t DEVICE_STATE_POLL_MS = 7000; // Command Center Phase 1 poll interval
 
     // If wifi looks dead 3 times rejoin
-    int consecutive_failures = 0;
-    const int MAX_CONSECUTIVE_FAILURES = 3;
 
     while (1) {
         uint64_t now = Kernel::get_ms_count();
@@ -1348,19 +1344,23 @@ int main(void) //RMAIN
                 case '4':
                     printf("4 is pressed -- toggling Fan\n");
                     // Toggle fan power
-                    fan_mutex.lock();
-                    bool new_fan_power = !fan_power;
-                    fan_mutex.unlock();
-                    request_fan_actuate(fan_speed, new_fan_power);
+                    {
+                        fan_mutex.lock();
+                        bool new_fan_power = !fan_power;
+                        fan_mutex.unlock();
+                        request_fan_actuate(fan_speed, new_fan_power);
+                    }
                     break;
                 case '5':
                     printf("5 is pressed -- Fan speed up\n");
                     // Increase fan speed by 25%
-                    fan_mutex.lock();
-                    uint8_t new_speed = fan_speed + 25;
-                    if (new_speed > 100) new_speed = 100;
-                    fan_mutex.unlock();
-                    request_fan_actuate(new_speed, fan_power);
+                    {
+                        fan_mutex.lock();
+                        uint8_t new_speed = fan_speed + 25;
+                        if (new_speed > 100) new_speed = 100;
+                        fan_mutex.unlock();
+                        request_fan_actuate(new_speed, fan_power);
+                    }
                     break;
                 case '6':
                     printf("6 is pressed -- toggling Door Lock\n");
