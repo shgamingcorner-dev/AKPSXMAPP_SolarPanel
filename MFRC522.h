@@ -368,8 +368,6 @@ public:
 	virtual bool PICC_ReadCardSerial();
 	
 protected:
-	PinName _chipSelectPin;		//  pin connected to MFRC522's SPI slave select input (Pin 24, NSS, active low)
-	PinName _resetPowerDownPin;	//  pin connected to MFRC522's reset and power down input (Pin 6, NRSTPD, active low)
 	StatusCode MIFARE_TwoStepHelper(byte command, byte blockAddr, int32_t data);
 };
 

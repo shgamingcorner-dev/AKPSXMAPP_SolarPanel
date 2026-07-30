@@ -99,9 +99,9 @@ void lcd_write_data(char data)
 void lcd_strobe(void)			// Generate the E pulse
 {
     LCD_EN = 1;					// E = 1 (enable high)
-    wait_us(1);					// 1-5us pulse width (EN pulse width min 230ns, enable cycle 500ns)
+    wait_us(LCD_STROBE_US);					// 1-5us pulse width (EN pulse width min 230ns, enable cycle 500ns)
     LCD_EN = 0;					// E = 0 (enable low - data latched on falling edge)
-    wait_us(1);					// 1-5us hold
+    wait_us(LCD_STROBE_US);					// 1-5us hold
 }
 
 
