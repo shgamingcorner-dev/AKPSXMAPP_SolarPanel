@@ -8,6 +8,8 @@
 // WiFi
 #define WIFI_SSID        "bye"
 #define WIFI_PASSWORD    "goodbye1"
+
+//Thinkspeak api key
 #define TS_API_KEY       "WFQQ2K9I14E30IE3"
 
 // Relay server (HTTPS bridge for ESP-01)
@@ -39,7 +41,7 @@
 #define MAIN_LIGHT_PIN    PC_2
 #define MOTOR_PIN         PA_7        // Curtain/Blind servo (180°): 0°=closed, 90°=open
 #define FAN_SERVO_PIN     PA_1        // Fan servo (360° continuous): speed 0-100%
-#define DOOR_LOCK_PIN     PC_6        // Door lock (relay or servo): HIGH=locked, LOW=unlocked
+#define DOOR_LOCK_PIN     PC_6        // Door lock (relay or servo): HIGH=locked, LOW=unlocked HAVE TO CHANGE***
 
 // Motor / Servo Timings
 #define WAIT_TIME_MS_0        2000  // time for servo to reach position
