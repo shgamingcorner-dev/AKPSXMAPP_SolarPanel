@@ -1,0 +1,7 @@
+{
+    "target_overrides": {
+        "*": {
+            "platform.main-thread-stack-size": 4096
+        }
+    }
+}
