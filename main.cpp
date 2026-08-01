@@ -1311,12 +1311,17 @@ int main(void) //RMAIN
         lcd_write_data(outChar2); 	// write character data to LCD
     }
 
+    // Allocate large buffers on heap to avoid stack overflow
+    g_tx = new (std::nothrow) char[BUF];
+    g_rx = new (std::nothrow) char[RX_BUF];
+    if (!g_tx || !g_rx) {
+        printf("[ERROR] Heap allocation failed for buffers\\n");
+        while (1) thread_sleep_for(1000); // Halt
+    }
+
     // Kick off WiFi/ThingSpeak/Telegram on its own thread so it can
     // never block RFID polling below, even during multi-second AT waits.
     networkThread.start(network_task);
-    // Allocate large buffers on heap to avoid stack overflow
-    g_tx = new char[BUF];
-    g_rx = new char[RX_BUF];
 
     int rfid = 0;
 
