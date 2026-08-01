@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <new>
 #include "DHT11.h"
 #include "lcd.h"
 #include "keypad.h"
@@ -17,8 +18,8 @@
 #define RX_BUF   1024
 
 static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
-static char g_tx[BUF];
-static char g_rx[RX_BUF];
+static char *g_tx = nullptr;
+static char *g_rx = nullptr;
 // 10-byte UID -> 20 hex chars + null = 21 bytes
 static char tagID[21];
 
@@ -1313,6 +1314,9 @@ int main(void) //RMAIN
     // Kick off WiFi/ThingSpeak/Telegram on its own thread so it can
     // never block RFID polling below, even during multi-second AT waits.
     networkThread.start(network_task);
+    // Allocate large buffers on heap to avoid stack overflow
+    g_tx = new char[BUF];
+    g_rx = new char[RX_BUF];
 
     int rfid = 0;
 
