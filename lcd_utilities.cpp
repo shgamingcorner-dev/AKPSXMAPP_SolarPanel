@@ -16,7 +16,7 @@ PortOut lcdPort(PortA, DISPLAY_LCD_MASK);
 DigitalOut LCD_RS(PC_7);   //  Register Select on LC
 DigitalOut LCD_EN(PA_12);   //  Enable on LCD controller
 //DigitalOut LCD_WR(PA_13);   //  Write on LCD controller
-DigitalOut LCD_WR(PB_12);   //  Write on LCD controller
+DigitalOut LCD_WR(PC_6);   //  Write on LCD controller
 
 void lcd_strobe(void);
 
