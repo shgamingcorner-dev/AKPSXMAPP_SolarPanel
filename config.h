@@ -38,7 +38,7 @@
 #define ESP_RX            PC_11
 #define DHT11_PIN         PC_4
 #define CURRENT_SENSOR_PIN PA_0
-#define MAIN_LIGHT_PIN    PC_2
+#define MAIN_LIGHT_PIN    PC_9
 #define MOTOR_PIN         PA_7        // Curtain/Blind servo (180°): 0°=closed, 90°=open
 #define FAN_SERVO_PIN     PA_1        // Fan servo (360° continuous): speed 0-100%
 #define DOOR_LOCK_PIN     PC_15        // Door lock (relay or servo): HIGH=locked, LOW=unlocked HAVE TO CHANGE***

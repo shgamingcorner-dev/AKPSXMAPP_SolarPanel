@@ -42,7 +42,7 @@ static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 // Keypad's InterruptIn/BusIn live in keypad_utilities.cpp -- keypad_init()
 // attaches the handler; key_pending/last_key (from keypad.h) are read here.
 
-static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
+static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);  // PC_9 (TIM3_CH4)
 
 // LCD
 unsigned char key2, outChar, outChar2, outChar3;
@@ -199,11 +199,9 @@ static uint8_t fan_menu_selection_to_speed(char key)
 // ============================================================
 // LED BRIGHTNESS PWM (0-100% -> PWM duty cycle)
 // ============================================================
-// MAIN_LIGHT_PIN (PC_2) is already a DigitalOut.
-// If the board supports PWM on PC_2, use PwmOut for brightness.
-// If not, we'll implement software PWM in main loop.
-// For now, use PwmOut with period_ms(10) = 100Hz, duty 0.0-1.0
-static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PC_2
+// MAIN_LIGHT_PIN (PC_9) is PWM capable (TIM3_CH4).
+// Use PwmOut with period_ms(10) = 100Hz, duty 0.0-1.0
+static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PC_9 (TIM3_CH4)
 
 static Mutex   brightness_mutex;
 static volatile uint8_t g_brightness = 100;  // 0-100%
@@ -245,187 +243,65 @@ static bool get_main_lighting(void)
     return on;
 }
 
-//  VALUES SHARED BETWEEN THREADS!!
-//
-//  main thread  : does RFID scanning + LEDs, runs every ~10ms using threadsleepfor
-//  network task : does WiFi/ThingSpeak/Telegram, runs on its own loop
+// Keypad presses happen on the main thread, but all ESP-01 AT traffic
+// (esp_send/esp_read/g_tx/g_rx) only ever runs on networkThread -- so a key
+// press can't call the relay directly. Instead it just requests a toggle
+// here (same mutex-protected-flag shape as g_latest_rfid above), and
+// network_task() picks the request up and does the actual relay push.
+static Mutex   device_state_mutex;
+static volatile bool pending_blind_toggle = false;
+static volatile bool pending_lighting_toggle = false;
 
+// Blind motor actuation request from network thread -- actual motor movement
+// (which blocks for WAIT_TIME_MS_0) runs on main thread to avoid stalling
+// the network task. This flag is set by network_task() and consumed by main().
+static Mutex   blind_actuate_mutex;
+static volatile bool pending_blind_actuate = false;
+static volatile bool pending_blind_open = false;
 
-static Mutex   rfid_mutex;
-static volatile int g_latest_rfid = 0;
+// Fan servo (360° continuous) + Door lock state -- shared between threads
+static Mutex   fan_mutex;
+static volatile uint8_t fan_speed = 0;        // 0-100%
+static volatile bool fan_power = false;
 
-static void set_latest_rfid(int value) //RFID match results that are shared between threads so its protected by a mutex================================
-// RFID AUTHENTICATION STATE MACHINE
-// ============================================================
-// User must scan RFID tag to unlock keypad control
-// After RFID scan, keypad is unlocked for RFID_UNLOCK_DURATION_MS (16s)
-// After timeout, keypad locks again until next RFID scan
-static Mutex   auth_mutex;
-static volatile bool g_keypad_unlocked = false;
-static volatile uint64_t g_auth_expiry_time = 0;
+static Mutex   door_mutex;
+static volatile bool door_locked = true;      // true = locked (HIGH)
 
-#define RFID_UNLOCK_DURATION_MS  16000  // 16 seconds of keypad access after RFID scan
+// Network thread requests fan/door actions; main thread applies them
+static Mutex   fan_actuate_mutex;
+static volatile bool pending_fan_actuate = false;
+static volatile uint8_t pending_fan_speed = 0;
+static volatile bool pending_fan_power = false;
 
-static void set_keypad_unlocked(bool unlocked)
+static Mutex   door_actuate_mutex;
+static volatile bool pending_door_actuate = false;
+static volatile bool pending_door_locked = false;
+
+static void request_fan_actuate(uint8_t speed, bool power)
 {
-    auth_mutex.lock();
-    g_keypad_unlocked = unlocked;
-    if (unlocked) {
-        g_auth_expiry_time = Kernel::get_ms_count() + RFID_UNLOCK_DURATION_MS;
-    } else {
-        g_auth_expiry_time = 0;
-    }
-    auth_mutex.unlock();
+    fan_actuate_mutex.lock();
+    pending_fan_actuate = true;
+    pending_fan_speed = speed;
+    pending_fan_power = power;
+    fan_actuate_mutex.unlock();
+
+    // Record local change time to suppress remote override for 15 seconds
+    fan_timestamp_mutex.lock();
+    last_fan_local_change = Kernel::get_ms_count();
+    fan_timestamp_mutex.unlock();
 }
 
-static bool is_keypad_unlocked(void)
+static void request_door_actuate(bool locked)
 {
-    auth_mutex.lock();
-    bool unlocked = g_keypad_unlocked;
-    uint64_t now = Kernel::get_ms_count();
-    if (unlocked && now >= g_auth_expiry_time) {
-        // Timeout expired - auto-lock
-        g_keypad_unlocked = false;
-        g_auth_expiry_time = 0;
-        unlocked = false;
-    }
-    auth_mutex.unlock();
-    return unlocked;
-}
+    door_actuate_mutex.lock();
+    pending_door_actuate = true;
+    pending_door_locked = locked;
+    door_actuate_mutex.unlock();
 
-static uint64_t get_auth_remaining_ms(void)
-{
-    auth_mutex.lock();
-    uint64_t expiry = g_auth_expiry_time;
-    auth_mutex.unlock();
-    uint64_t now = Kernel::get_ms_count();
-    if (expiry > now) return expiry - now;
-    return 0;
-}
-
-// ============================================================
-// FAN SPEED SELECTION STATE MACHINE (Keypad sub-menu)
-// ============================================================
-// When user presses "4" (Fans), enter fan speed sub-menu:
-// 1: Low (33%), 2: Med (66%), 3: High (100%), 4: Off
-static Mutex   fan_menu_mutex;
-static volatile bool g_in_fan_menu = false;
-static volatile uint64_t g_fan_menu_expiry = 0;
-#define FAN_MENU_TIMEOUT_MS  10000  // 10 seconds to select fan speed
-
-static void enter_fan_menu(void)
-{
-    fan_menu_mutex.lock();
-    g_in_fan_menu = true;
-    g_fan_menu_expiry = Kernel::get_ms_count() + FAN_MENU_TIMEOUT_MS;
-    fan_menu_mutex.unlock();
-}
-
-static void exit_fan_menu(void)
-{
-    fan_menu_mutex.lock();
-    g_in_fan_menu = false;
-    g_fan_menu_expiry = 0;
-    fan_menu_mutex.unlock();
-}
-
-static bool is_in_fan_menu(void)
-{
-    fan_menu_mutex.lock();
-    bool in_menu = g_in_fan_menu;
-    uint64_t now = Kernel::get_ms_count();
-    if (in_menu && now >= g_fan_menu_expiry) {
-        g_in_fan_menu = false;
-        g_fan_menu_expiry = 0;
-        in_menu = false;
-    }
-    fan_menu_mutex.unlock();
-    return in_menu;
-}
-
-static void refresh_fan_menu_timeout(void)
-{
-    fan_menu_mutex.lock();
-    if (g_in_fan_menu) {
-        g_fan_menu_expiry = Kernel::get_ms_count() + FAN_MENU_TIMEOUT_MS;
-    }
-    fan_menu_mutex.unlock();
-}
-
-static uint8_t fan_menu_selection_to_speed(char key)
-{
-    switch (key) {
-        case '1': return 33;   // Low
-        case '2': return 66;   // Medium
-        case '3': return 100;  // High
-        case '4': return 0;    // Off
-        default: return 255;   // Invalid
-    }
-}
-
-// ============================================================
-// LED BRIGHTNESS PWM (0-100% -> PWM duty cycle)
-// ============================================================
-// MAIN_LIGHT_PIN (PC_2) is already a DigitalOut.
-// If the board supports PWM on PC_2, use PwmOut for brightness.
-// If not, we'll implement software PWM in main loop.
-// For now, use PwmOut with period_ms(10) = 100Hz, duty 0.0-1.0
-static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PC_2
-
-static Mutex   brightness_mutex;
-static volatile uint8_t g_brightness = 100;  // 0-100%
-
-static void set_brightness(uint8_t brightness)
-{
-    brightness_mutex.lock();
-    if (brightness > 100) brightness = 100;
-    g_brightness = brightness;
-    brightness_mutex.unlock();
-    
-    // Apply immediately to PWM
-    float duty = (float)g_brightness / 100.0f;
-    led_mainLighting_pwm.write(duty);
-}
-
-static uint8_t get_brightness(void)
-{
-    brightness_mutex.lock();
-    uint8_t b = g_brightness;
-    brightness_mutex.unlock();
-    return b;
-}
-
-static void set_main_lighting(bool on)
-{
-    if (on) {
-        set_brightness(get_brightness());  // Apply current brightness
-    } else {
-        led_mainLighting_pwm.write(0.0f);  // Off = 0% duty
-    }
-}
-
-static bool get_main_lighting(void)
-{
-    brightness_mutex.lock();
-    bool on = (g_brightness > 0);
-    brightness_mutex.unlock();
-    return on;
-}
-
-//  VALUES SHARED BETWEEN THREADS!!
-//
-//  main thread  : does RFID scanning + LEDs, runs every ~10ms using threadsleepfor
-//  network task : does WiFi/ThingSpeak/Telegram, runs on its own loop
-
-
-static Mutex   rfid_mutex;
-static volatile int g_latest_rfid = 0;
-
-static void set_latest_rfid(int value) //RFID match results that are shared between threads so its protected by a mutex
-{
-    rfid_mutex.lock();
-    g_latest_rfid = value;
-    rfid_mutex.unlock();
+    // Record local change time to suppress remote override for 15 seconds
+    door_timestamp_mutex.lock();
+    last_door_local_change = Kernel::get_ms_count();
+    door_timestamp_mutex.unlock();
 }
 
 static int get_latest_rfid(void)
@@ -1351,7 +1227,11 @@ static bool door_locked_known = false;
 // next poll cycle to notice its own change.
 static void apply_main_lighting(bool on)
 {
-    led_mainLighting = on;
+    if (on) {
+        set_brightness(get_brightness());  // Apply current brightness PWM
+    } else {
+        led_mainLighting_pwm.write(0.0f);  // Off = 0% duty
+    }
     last_main_lighting = on;
     main_lighting_known = true;
     printf("[DS] mainLighting -> %s\n", on ? "ON" : "OFF");
