@@ -1092,6 +1092,7 @@ static bool poll_device_state_via_relay(void)
     if (esp_read(3000, "CLOSED") <= 0) { // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
         at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
         return false;
+    }
     bool ok = strstr(g_rx, "200 OK") != NULL;
         if (ok) {
             bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
