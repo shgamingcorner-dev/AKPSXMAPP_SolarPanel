@@ -41,7 +41,7 @@
 #define MAIN_LIGHT_PIN    PC_9
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PC_15
+#define DOOR_LOCK_PIN     PC_6
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)
 
 // Motor / Servo Timings
@@ -50,6 +50,7 @@
 #define PULSE_WIDTH_90_DEGREE   2400
 #define PULSE_WIDTH_0_DEGREE    1500
 #define PULSE_WIDTH_N_90_DEGREE 600
+
 
 // Fan Servo (360° continuous rotation)
 #define FAN_SERVO_NEUTRAL_US     1500
