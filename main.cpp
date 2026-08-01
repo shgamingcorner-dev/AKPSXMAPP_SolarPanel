@@ -1339,8 +1339,8 @@ int main(void)
 
     printf("\n=== STM32 + ESP-01 -> ThingSpeak ===\n");
 
-    lcdmessage(Message1, 1);
-    lcdmessage(Message2, 2);
+    lcdmessage(MessageLocked, 1);
+    lcdmessage(MessageLocked2, 2);
 
     g_tx = new (std::nothrow) char[BUF];
     g_rx = new (std::nothrow) char[RX_BUF];
