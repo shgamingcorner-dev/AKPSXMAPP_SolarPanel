@@ -15,9 +15,11 @@
 
                 // note durations: 4 = quarter note, 8 = eighth note, etc.:
                 int noteDurations2[] = {4, 8, 8, 4, 4, 4, 4, 4};
-                //Set Port A, GPIO Pin 1 (PA_1) as digitial out put pin
-                //declare a buzzer as a DigitalOut object by passing PA_1 as the initialition parameter 
-                DigitalOut buzzerMusic(PA_1); 
+                #include "config.h"
+
+                                //Set Port A, GPIO Pin 1 (PA_1) as digitial out put pin
+                                //declare a buzzer as a DigitalOut object by passing BUZZER_PIN as the initialition parameter
+                                DigitalOut buzzerMusic(BUZZER_PIN);
 
                 void tone(int freq, int duration) 
                 {
