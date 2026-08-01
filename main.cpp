@@ -7,27 +7,31 @@
 #include <string.h>
 #include <ctype.h>
 #include <new>
+#include <atomic>
 #include "DHT11.h"
 #include "lcd.h"
 #include "keypad.h"
 #include "config.h"
 
-//  DONOTEDIT — no need to edit below this line unless programming your own stuff
-
 #define BUF      512
 #define RX_BUF   1024
+
+// Helper: replaces deprecated Kernel::get_ms_count() (mbed-os-6.0.0)
+static inline uint64_t now_ms(void)
+{
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(Kernel::Clock::now().time_since_epoch()).count();
+}
 
 static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
 static char *g_tx = nullptr;
 static char *g_rx = nullptr;
-// 10-byte UID -> 20 hex chars + null = 21 bytes
 static char tagID[21];
 
 // Hardware: Fan servo (360° continuous rotation) + Door lock
 static PwmOut fanServo(FAN_SERVO_PIN);
 static DigitalOut doorLock(DOOR_LOCK_PIN);
 
-// Original hardware objects (moved from top of file)
 MFRC522             mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 
@@ -39,10 +43,6 @@ static DigitalOut led_Red(PB_6);
 static DigitalOut led_Green(PC_1);
 static DigitalOut DHT11VCC(PB_0);
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
-// Keypad's InterruptIn/BusIn live in keypad_utilities.cpp -- keypad_init()
-// attaches the handler; key_pending/last_key (from keypad.h) are read here.
-
-static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);  // PC_9 (TIM3_CH4)
 
 // LCD
 unsigned char key2, outChar, outChar2, outChar3;
@@ -54,14 +54,12 @@ char Message2 [ ] = "3.Lighting 4.Fans ";
 char Message3 [ ] = "Invalid try again";
 char FanspeedM [ ] = "1:Low 2:Med";
 char FanspeedM2 [ ] = "3:High 4:Off";
-// Timestamp variables for grace period (must be before functions that use them)
-// Protected by their own mutexes for thread-safe access between main thread (writes) and network thread (reads)
+
 static uint64_t last_lighting_local_change = 0;
 static uint64_t last_blind_local_change = 0;
 static uint64_t last_fan_local_change = 0;
 static uint64_t last_door_local_change = 0;
 
-// Confirmed values from successful pushes (preferred over stale Supabase data)
 static bool confirmed_lighting = false;
 static bool confirmed_blind = false;
 static uint8_t confirmed_fan_speed = 0;
@@ -81,30 +79,21 @@ static Mutex confirmed_door_mutex;
 DHT11 dht11(DHT11_PIN);
 
 
-//  VALUES SHARED BETWEEN THREADS!!
-//
-//  main thread  : does RFID scanning + LEDs, runs every ~10ms using threadsleepfor
-//  network task : does WiFi/ThingSpeak/Telegram, runs on its own loop
-
-
 // ============================================================
 // RFID AUTHENTICATION STATE MACHINE
 // ============================================================
-// User must scan RFID tag to unlock keypad control
-// After RFID scan, keypad is unlocked for RFID_UNLOCK_DURATION_MS (16s)
-// After timeout, keypad locks again until next RFID scan
 static Mutex   auth_mutex;
 static volatile bool g_keypad_unlocked = false;
 static volatile uint64_t g_auth_expiry_time = 0;
 
-#define RFID_UNLOCK_DURATION_MS  16000  // 16 seconds of keypad access after RFID scan
+#define RFID_UNLOCK_DURATION_MS  16000
 
 static void set_keypad_unlocked(bool unlocked)
 {
     auth_mutex.lock();
     g_keypad_unlocked = unlocked;
     if (unlocked) {
-        g_auth_expiry_time = Kernel::get_ms_count() + RFID_UNLOCK_DURATION_MS;
+        g_auth_expiry_time = now_ms() + RFID_UNLOCK_DURATION_MS;
     } else {
         g_auth_expiry_time = 0;
     }
@@ -115,9 +104,8 @@ static bool is_keypad_unlocked(void)
 {
     auth_mutex.lock();
     bool unlocked = g_keypad_unlocked;
-    uint64_t now = Kernel::get_ms_count();
+    uint64_t now = now_ms();
     if (unlocked && now >= g_auth_expiry_time) {
-        // Timeout expired - auto-lock
         g_keypad_unlocked = false;
         g_auth_expiry_time = 0;
         unlocked = false;
@@ -131,7 +119,7 @@ static uint64_t get_auth_remaining_ms(void)
     auth_mutex.lock();
     uint64_t expiry = g_auth_expiry_time;
     auth_mutex.unlock();
-    uint64_t now = Kernel::get_ms_count();
+    uint64_t now = now_ms();
     if (expiry > now) return expiry - now;
     return 0;
 }
@@ -139,18 +127,16 @@ static uint64_t get_auth_remaining_ms(void)
 // ============================================================
 // FAN SPEED SELECTION STATE MACHINE (Keypad sub-menu)
 // ============================================================
-// When user presses "4" (Fans), enter fan speed sub-menu:
-// 1: Low (33%), 2: Med (66%), 3: High (100%), 4: Off
 static Mutex   fan_menu_mutex;
 static volatile bool g_in_fan_menu = false;
 static volatile uint64_t g_fan_menu_expiry = 0;
-#define FAN_MENU_TIMEOUT_MS  10000  // 10 seconds to select fan speed
+#define FAN_MENU_TIMEOUT_MS  10000
 
 static void enter_fan_menu(void)
 {
     fan_menu_mutex.lock();
     g_in_fan_menu = true;
-    g_fan_menu_expiry = Kernel::get_ms_count() + FAN_MENU_TIMEOUT_MS;
+    g_fan_menu_expiry = now_ms() + FAN_MENU_TIMEOUT_MS;
     fan_menu_mutex.unlock();
 }
 
@@ -166,7 +152,7 @@ static bool is_in_fan_menu(void)
 {
     fan_menu_mutex.lock();
     bool in_menu = g_in_fan_menu;
-    uint64_t now = Kernel::get_ms_count();
+    uint64_t now = now_ms();
     if (in_menu && now >= g_fan_menu_expiry) {
         g_in_fan_menu = false;
         g_fan_menu_expiry = 0;
@@ -180,7 +166,7 @@ static void refresh_fan_menu_timeout(void)
 {
     fan_menu_mutex.lock();
     if (g_in_fan_menu) {
-        g_fan_menu_expiry = Kernel::get_ms_count() + FAN_MENU_TIMEOUT_MS;
+        g_fan_menu_expiry = now_ms() + FAN_MENU_TIMEOUT_MS;
     }
     fan_menu_mutex.unlock();
 }
@@ -197,11 +183,10 @@ static uint8_t fan_menu_selection_to_speed(char key)
 }
 
 // ============================================================
-// LED BRIGHTNESS PWM (0-100% -> PWM duty cycle)
+// MAIN LIGHTING PWM (0-100% -> PWM duty cycle)
 // ============================================================
-// MAIN_LIGHT_PIN (PC_9) is PWM capable (TIM3_CH4).
-// Use PwmOut with period_ms(10) = 100Hz, duty 0.0-1.0
-static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PC_9 (TIM3_CH4)
+// PC_9 = TIM3_CH4 - confirmed PWM-capable in NUCLEO_F103RB pinmap.
+static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PC_9
 
 static Mutex   brightness_mutex;
 static volatile uint8_t g_brightness = 100;  // 0-100%
@@ -212,8 +197,7 @@ static void set_brightness(uint8_t brightness)
     if (brightness > 100) brightness = 100;
     g_brightness = brightness;
     brightness_mutex.unlock();
-    
-    // Apply immediately to PWM
+
     float duty = (float)g_brightness / 100.0f;
     led_mainLighting_pwm.write(duty);
 }
@@ -229,9 +213,9 @@ static uint8_t get_brightness(void)
 static void set_main_lighting(bool on)
 {
     if (on) {
-        set_brightness(get_brightness());  // Apply current brightness
+        set_brightness(get_brightness());
     } else {
-        led_mainLighting_pwm.write(0.0f);  // Off = 0% duty
+        led_mainLighting_pwm.write(0.0f);
     }
 }
 
@@ -243,65 +227,16 @@ static bool get_main_lighting(void)
     return on;
 }
 
-// Keypad presses happen on the main thread, but all ESP-01 AT traffic
-// (esp_send/esp_read/g_tx/g_rx) only ever runs on networkThread -- so a key
-// press can't call the relay directly. Instead it just requests a toggle
-// here (same mutex-protected-flag shape as g_latest_rfid above), and
-// network_task() picks the request up and does the actual relay push.
-static Mutex   device_state_mutex;
-static volatile bool pending_blind_toggle = false;
-static volatile bool pending_lighting_toggle = false;
 
-// Blind motor actuation request from network thread -- actual motor movement
-// (which blocks for WAIT_TIME_MS_0) runs on main thread to avoid stalling
-// the network task. This flag is set by network_task() and consumed by main().
-static Mutex   blind_actuate_mutex;
-static volatile bool pending_blind_actuate = false;
-static volatile bool pending_blind_open = false;
+// RFID match results shared between threads, protected by a mutex
+static Mutex   rfid_mutex;
+static volatile int g_latest_rfid = 0;
 
-// Fan servo (360° continuous) + Door lock state -- shared between threads
-static Mutex   fan_mutex;
-static volatile uint8_t fan_speed = 0;        // 0-100%
-static volatile bool fan_power = false;
-
-static Mutex   door_mutex;
-static volatile bool door_locked = true;      // true = locked (HIGH)
-
-// Network thread requests fan/door actions; main thread applies them
-static Mutex   fan_actuate_mutex;
-static volatile bool pending_fan_actuate = false;
-static volatile uint8_t pending_fan_speed = 0;
-static volatile bool pending_fan_power = false;
-
-static Mutex   door_actuate_mutex;
-static volatile bool pending_door_actuate = false;
-static volatile bool pending_door_locked = false;
-
-static void request_fan_actuate(uint8_t speed, bool power)
+static void set_latest_rfid(int value)
 {
-    fan_actuate_mutex.lock();
-    pending_fan_actuate = true;
-    pending_fan_speed = speed;
-    pending_fan_power = power;
-    fan_actuate_mutex.unlock();
-
-    // Record local change time to suppress remote override for 15 seconds
-    fan_timestamp_mutex.lock();
-    last_fan_local_change = Kernel::get_ms_count();
-    fan_timestamp_mutex.unlock();
-}
-
-static void request_door_actuate(bool locked)
-{
-    door_actuate_mutex.lock();
-    pending_door_actuate = true;
-    pending_door_locked = locked;
-    door_actuate_mutex.unlock();
-
-    // Record local change time to suppress remote override for 15 seconds
-    door_timestamp_mutex.lock();
-    last_door_local_change = Kernel::get_ms_count();
-    door_timestamp_mutex.unlock();
+    rfid_mutex.lock();
+    g_latest_rfid = value;
+    rfid_mutex.unlock();
 }
 
 static int get_latest_rfid(void)
@@ -313,30 +248,22 @@ static int get_latest_rfid(void)
 }
 
 // Keypad presses happen on the main thread, but all ESP-01 AT traffic
-// (esp_send/esp_read/g_tx/g_rx) only ever runs on networkThread -- so a key
-// press can't call the relay directly. Instead it just requests a toggle
-// here (same mutex-protected-flag shape as g_latest_rfid above), and
-// network_task() picks the request up and does the actual relay push.
+// only ever runs on networkThread -- so key presses just request actions.
 static Mutex   device_state_mutex;
 static volatile bool pending_blind_toggle = false;
 static volatile bool pending_lighting_toggle = false;
 
-// Blind motor actuation request from network thread -- actual motor movement
-// (which blocks for WAIT_TIME_MS_0) runs on main thread to avoid stalling
-// the network task. This flag is set by network_task() and consumed by main().
 static Mutex   blind_actuate_mutex;
 static volatile bool pending_blind_actuate = false;
 static volatile bool pending_blind_open = false;
 
-// Fan servo (360° continuous) + Door lock state -- shared between threads
 static Mutex   fan_mutex;
-static volatile uint8_t fan_speed = 0;        // 0-100%
+static volatile uint8_t fan_speed = 0;
 static volatile bool fan_power = false;
 
 static Mutex   door_mutex;
-static volatile bool door_locked = true;      // true = locked (HIGH)
+static volatile bool door_locked = true;
 
-// Network thread requests fan/door actions; main thread applies them
 static Mutex   fan_actuate_mutex;
 static volatile bool pending_fan_actuate = false;
 static volatile uint8_t pending_fan_speed = 0;
@@ -354,9 +281,8 @@ static void request_fan_actuate(uint8_t speed, bool power)
     pending_fan_power = power;
     fan_actuate_mutex.unlock();
 
-    // Record local change time to suppress remote override for 15 seconds
     fan_timestamp_mutex.lock();
-    last_fan_local_change = Kernel::get_ms_count();
+    last_fan_local_change = now_ms();
     fan_timestamp_mutex.unlock();
 }
 
@@ -367,9 +293,8 @@ static void request_door_actuate(bool locked)
     pending_door_locked = locked;
     door_actuate_mutex.unlock();
 
-    // Record local change time to suppress remote override for 15 seconds
     door_timestamp_mutex.lock();
-    last_door_local_change = Kernel::get_ms_count();
+    last_door_local_change = now_ms();
     door_timestamp_mutex.unlock();
 }
 
@@ -405,8 +330,6 @@ static void set_fan_speed(uint8_t speed)
     fan_mutex.unlock();
 
     if (fan_power) {
-        // Map 0-100% to 1500-2000 us (neutral to full forward)
-        // Neutral = 1500 us (stop), Full forward = 2000 us
         uint16_t pulse = FAN_SERVO_NEUTRAL_US + (speed * (FAN_SERVO_MAX_FWD_US - FAN_SERVO_NEUTRAL_US)) / 100;
         fanServo.pulsewidth_us(pulse);
     }
@@ -421,7 +344,7 @@ static void set_fan_power(bool on)
     if (on) {
         set_fan_speed(fan_speed);
     } else {
-        fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US); // stop
+        fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US);
     }
 }
 
@@ -434,7 +357,6 @@ static void set_door_lock(bool locked)
     doorLock = locked ? DOOR_LOCK_LOCKED : DOOR_LOCK_UNLOCKED;
 }
 
-// Getter functions for network thread
 static uint8_t get_fan_speed(void)
 {
     fan_mutex.lock();
@@ -465,9 +387,8 @@ static void request_blind_toggle(void)
     pending_blind_toggle = true;
     device_state_mutex.unlock();
 
-    // Record local change time to suppress remote override for 15 seconds
     blind_timestamp_mutex.lock();
-    last_blind_local_change = Kernel::get_ms_count();
+    last_blind_local_change = now_ms();
     blind_timestamp_mutex.unlock();
 }
 
@@ -477,13 +398,11 @@ static void request_lighting_toggle(void)
     pending_lighting_toggle = true;
     device_state_mutex.unlock();
 
-    // Record local change time to suppress remote override for 15 seconds
     lighting_timestamp_mutex.lock();
-    last_lighting_local_change = Kernel::get_ms_count();
+    last_lighting_local_change = now_ms();
     lighting_timestamp_mutex.unlock();
 }
 
-// Returns true (and clears the flag) if a toggle was requested since the last call.
 static bool consume_pending_blind_toggle(void)
 {
     device_state_mutex.lock();
@@ -493,7 +412,6 @@ static bool consume_pending_blind_toggle(void)
     return v;
 }
 
-// Request blind motor actuation from network thread -- actual movement happens on main thread.
 static void request_blind_actuate(bool open)
 {
     blind_actuate_mutex.lock();
@@ -502,7 +420,6 @@ static void request_blind_actuate(bool open)
     blind_actuate_mutex.unlock();
 }
 
-// Consume blind actuation request (called from main thread).
 static bool consume_pending_blind_actuate(bool *out_open)
 {
     blind_actuate_mutex.lock();
@@ -533,15 +450,12 @@ static void fmt_float(char *out, int out_sz, float v)
     snprintf(out, out_sz, "%s%d.%d", neg ? "-" : "", whole, frac);
 }
 
-
-
 //  RFID  (runs on the main thread)
-
 
 static bool rfid_readID(void)
 {
     char HexString[3];
-    uint8_t uid_size = mfrc522.uid.size; // Use actual UID size (4, 7, or 10 bytes)
+    uint8_t uid_size = mfrc522.uid.size;
     for (uint8_t i = 0; i < uid_size && i < 10; i++) {
         sprintf(HexString, "%02X", mfrc522.uid.uidByte[i]);
         tagID[2*i]   = HexString[0];
@@ -553,7 +467,6 @@ static bool rfid_readID(void)
 
 static int read_RFID(void)
 {
-
     if (!mfrc522.PICC_IsNewCardPresent()) return 0;
     if (!mfrc522.PICC_ReadCardSerial())   return 0;
     if (!rfid_readID())                   return 0;
@@ -571,13 +484,8 @@ static int read_RFID(void)
     return 0;
 }
 
+//  SENSOR FUNCTIONS
 
-
-//  SENSOR FUNCTIONS all called from network task before sending the data
-
-// reads temperature and humidity from a single DHT11 transaction --
-// previously these were two separate independent reads, doubling bus
-// traffic and doubling exposure to timing/preemption failures every cycle
 static int g_dht_temperature = 2634;
 static int g_dht_humidity = 4001;
 
@@ -597,40 +505,23 @@ static void read_dht11(void)
     {
         printf("%s\n", dht11.getErrorString(error));
     }
-    DHT11VCC = 0; // Power off DHT11 after reading to save power
+    DHT11VCC = 0;
 }
 
-static float read_temperature(void)
-{
-    return g_dht_temperature;
-}
-
-static float read_humidity(void)
-{
-    return g_dht_humidity;
-}
-
-// ACS712 20A: 100mV/A at the sensor, scaled to 60mV/A by the 10k/15k divider.
-// Zero-current point is VCC/2 (2.5V) at the sensor, scaled to 1.5V at the pin.
-// Adjust ACS712_ZERO_V if measured current reads non-zero with nothing connected
-// -- the sensor's offset and the divider's resistor tolerance both shift this a bit.
-// Constants now defined in config.h
+static float read_temperature(void) { return g_dht_temperature; }
+static float read_humidity(void)    { return g_dht_humidity; }
 
 static float read_current(void)
 {
-    // Average several samples -- the ESP-01/RFID reader share a power rail
-    // with known instability (see README), so a single ADC sample is noisy.
     const int samples = 20;
     float sum = 0.0f;
     for (int i = 0; i < samples; i++) {
-        sum += current_sensor.read();  // normalized 0.0-1.0 over ADC_VREF
+        sum += current_sensor.read();
         wait_us(100);
     }
     float pin_voltage = (sum / samples) * ADC_VREF;
     float current = (pin_voltage - ACS712_ZERO_V) / ACS712_SENSITIVITY_V_PER_A;
 
-    // %f isn't supported by this board's minimal printf (see fmt_float() note
-    // elsewhere in this file) -- format manually instead of silently no-op'ing.
     char cur_s[16], volt_s[16];
     fmt_float(cur_s, sizeof(cur_s), current);
     fmt_float(volt_s, sizeof(volt_s), pin_voltage);
@@ -638,31 +529,25 @@ static float read_current(void)
     return current;
 }
 
-
 //Motor functions
 
 static float motor_init(void)
 {
-    motor.period_ms(PERIOD_WIDTH); //period according to the specification, e.g., 20ms
-    motor.pulsewidth_us(PULSE_WIDTH_0_DEGREE); //to 0 position, at the middle
+    motor.period_ms(PERIOD_WIDTH);
+    motor.pulsewidth_us(PULSE_WIDTH_0_DEGREE);
     printf("Move to 0 position: Middle\n");
-
-    thread_sleep_for(WAIT_TIME_MS_0); //wait for the motor moving to the position
-
+    thread_sleep_for(WAIT_TIME_MS_0);
     return 0.0f;
 }
 
 static float motor_position_to_angle(float pulse_width_us)
 {
-    motor.pulsewidth_us(pulse_width_us); //Move to expected position
+    motor.pulsewidth_us(pulse_width_us);
     printf("Motor moving\n");
-    thread_sleep_for(WAIT_TIME_MS_0); //wait for the motor to reach the position before returning
-
-    //angle calc
+    thread_sleep_for(WAIT_TIME_MS_0);
     float angle = ((pulse_width_us - PULSE_WIDTH_0_DEGREE) / (float)(PULSE_WIDTH_90_DEGREE - PULSE_WIDTH_0_DEGREE)) * 90.0f;
     return angle;
 }
-
 
 //LCD functions
 
@@ -670,29 +555,26 @@ static void lcdmessage(const char *MessageS, int Line)
 {
     if (Line == 1)
     {
-    lcd_write_cmd(0x80);			// Move cursor to line 1 position 1
-            for (int i = 0; i < (int)strlen(MessageS); i++)		//for 20 char LCD module
-            {
-                outChar = MessageS[i];
-                lcd_write_data(outChar); 	// write character data to LCD
-            }
+        lcd_write_cmd(0x80);
+        for (int i = 0; i < (int)strlen(MessageS); i++)
+        {
+            outChar = MessageS[i];
+            lcd_write_data(outChar);
+        }
     }
 
     if (Line == 2)
     {
-            lcd_write_cmd(0xC0);			// Move cursor to line 2 position 1
-
-            for (int i = 0; i < (int)strlen(MessageS); i++)		//for 20 char LCD module
-            {
-                outChar2 = MessageS[i];
-                lcd_write_data(outChar2); 	// write character data to LCD
-            }
+        lcd_write_cmd(0xC0);
+        for (int i = 0; i < (int)strlen(MessageS); i++)
+        {
+            outChar2 = MessageS[i];
+            lcd_write_data(outChar2);
+        }
     }
 }
 
-
 //  THINGSPEAK FIELD TABLE
-
 
 typedef struct {
     int        field;
@@ -700,7 +582,7 @@ typedef struct {
     const char *label;
 } ts_field_t;
 
-#define TS_NUM_FIELDS 4 //Change if needed
+#define TS_NUM_FIELDS 4
 static ts_field_t ts_fields[TS_NUM_FIELDS] = {
     { TS_FIELD_TEMPERATURE, "", "Temperature" },
     { TS_FIELD_HUMIDITY,    "", "Humidity"    },
@@ -708,20 +590,8 @@ static ts_field_t ts_fields[TS_NUM_FIELDS] = {
     { TS_FIELD_RFIDQ,       "", "RFID"        },
 };
 
-
-
 //  ESP-01 LOW-LEVEL  (all called only from the network task)
 
-
-// Throw away anything still sitting in the UART before issuing a new
-// command. Because esp_read() returns the moment its stop token appears, a
-// response's trailing bytes are often left behind -- e.g. CWJAP's "OK"
-// arrives after the "GOT IP" we stopped on. Left in place, the NEXT
-// command's read picks up that stale text, matches its own stop token
-// against it immediately, and returns before its real reply arrives. Every
-// read after that is answering the previous command: the whole pipeline
-// slips by one and never recovers. Anything pending before we transmit is
-// by definition stale, so dropping it is always safe.
 static void esp_drain(void)
 {
     char scratch[64];
@@ -743,38 +613,22 @@ static void esp_send(const char *cmd)
     led_tx = !led_tx;
 }
 
-// Optional stop1/stop2 are substrings that mark a genuine, protocol-level
-// end to this specific response (e.g. the actual "CONNECT"/"ERROR" result of
-// a CIPSTART, or ",CLOSED" once the far end -- which we always ask to close
-// via "Connection: close" -- has finished sending and closed the socket).
-// Checking for the real marker instead of guessing from a quiet gap means we
-// can safely return the moment the response is actually complete, without
-// the risk of returning early on a response that just arrived in bursts
-// (e.g. CIPSTART's command echo followed by a delayed CONNECT once the TCP
-// handshake completes) and letting the real reply spill into the next call.
 static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL) {
-      uint32_t start = Kernel::get_ms_count();
+      uint32_t start = now_ms();
       int n = 0;
-      // Poll until timeout OR buffer full -- do NOT bail out just because a
-      // single poll found nothing readable. The response can arrive in more
-      // than one chunk with a brief gap between them (e.g. a multi-segment
-      // TCP delivery), and breaking early there truncates the buffer mid-body
-      // -- this is exactly what caused main_lighting to be misread as OFF
-      // right after gate_servo (which sorts first in the JSON and so always
-      // landed before any premature cutoff).
-      while (Kernel::get_ms_count() - start < (uint32_t)wait_ms) {
+      while (now_ms() - start < (uint32_t)wait_ms) {
           if (esp.readable()) {
               int chunk = esp.read(g_rx + n, RX_BUF - 1 - n);
               if (chunk > 0) {
                   n += chunk;
                   if (n >= (int)(RX_BUF - 1)) break;
-                  g_rx[n] = '\0'; // null-terminate so strstr below only sees bytes actually received
+                  g_rx[n] = '\0';
                   if ((stop1 && strstr(g_rx, stop1)) || (stop2 && strstr(g_rx, stop2))) {
                       break;
                   }
               }
           }
-          thread_sleep_for(5); // Short yield (5ms vs previous 20ms+wait_ms)
+          thread_sleep_for(5);
       }
 
       if (n > 0) {
@@ -785,25 +639,6 @@ static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *st
       return n;
   }
 
-// static int esp_read(int wait_ms = 1000)
-// {
-//     thread_sleep_for(wait_ms);
-//     int n = 0;
-//     while (esp.readable()) {
-//         int chunk = esp.read(g_rx + n, RX_BUF - 1 - n);                    //OLD
-//         if (chunk <= 0) break;
-//         n += chunk;
-//         if (n >= (int)(RX_BUF - 1)) break;
-//         thread_sleep_for(20);
-//     }
-//     if (n > 0) {
-//         g_rx[n] = '\0';
-//         led_rx = !led_rx;
-//         printf("[ESP] %s\n", g_rx);
-//     }
-//     return n;
-// }
-
 static int at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL)
 {
     printf(">> %s", cmd);
@@ -811,7 +646,6 @@ static int at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, con
     return esp_read(wait_ms, stop1, stop2);
 }
 
-// Closes a connection id without caring whether it was actually open.
 static bool esp_close(int id)
 {
     char cmd[24];
@@ -819,25 +653,6 @@ static bool esp_close(int id)
     return at(cmd, 500, "OK", "ERROR") > 0;
 }
 
-// Opens a TCP socket on `id`, returning true only when the module actually
-// reports "<id>,CONNECT". A bare "OK" is not proof of anything: after a
-// reconnect the module answers "busy p..." then a stray OK while the socket
-// stays shut, which used to send us charging into CIPSEND and getting
-// "link is not valid".
-//
-// On failure the id is always closed again. That matters more than it looks:
-// if the socket opens just *after* we time out, an unclosed link answers the
-// next CIPSTART with "ALREADY CONNECTED" -- which is not ",CONNECT", so we
-// would reject it and leave without closing once more, wedging that id
-// permanently.
-//
-// If `ip_fallback` is given, a failed hostname attempt is retried once
-// against the literal IP. The ESP-01's DNS resolver is slow and unreliable,
-// particularly right after a reset has cleared its cache, and from here a
-// failed lookup is indistinguishable from a dead server. The HTTP request
-// still sends "Host: <hostname>", so name-based virtual hosting on the far
-// end keeps working. Which path succeeded is printed, so the serial log says
-// outright whether DNS was the problem.
 static bool esp_open_tcp(int id, const char *host, const char *ip_fallback, int port, const char *tag)
 {
     snprintf(g_tx, BUF,
@@ -868,7 +683,6 @@ static bool esp_open_tcp(int id, const char *host, const char *ip_fallback, int 
     return false;
 }
 
-// Percent-encode a string for use in a URL query param
 static void urlencode(char *dst, int dst_sz, const char *src)
 {
     int j = 0;
@@ -886,20 +700,14 @@ static void urlencode(char *dst, int dst_sz, const char *src)
     dst[j] = '\0';
 }
 
-
-
 //  THINGSPEAK SENDER
-
 
 static bool send_to_thingspeak(void)
 {
-    // 1. Open TCP -- no IP fallback needed, ThingSpeak's name resolves fine
-    //    and its address is load balanced, so pinning one would age badly.
     if (!esp_open_tcp(0, TS_HOST, NULL, TS_PORT, "[TS]")) {
         return false;
     }
 
-    // 2. Build query string
     char query[BUF] = {0};
     snprintf(query, sizeof(query), "GET /update?api_key=%s", TS_API_KEY);
     for (int i = 0; i < TS_NUM_FIELDS; i++) {
@@ -914,21 +722,19 @@ static bool send_to_thingspeak(void)
 
     int req_len = strlen(query);
 
-    // 3. CIPSEND
     snprintf(g_tx, BUF, "AT+CIPSEND=0,%d\r\n", req_len);
-    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[TS] No > prompt\n");
-            at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
+            at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR");
             return false;
         }
     }
 
-    // 4. Send
     printf("[TS] Sending: %s\n", query);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
-        at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
+    if (esp_read(3000, "CLOSED") <= 0) {
+        at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR");
         return false;
     }
 
@@ -938,19 +744,14 @@ static bool send_to_thingspeak(void)
         printf("[TS] Unexpected response — check API key / rate limit\n");
     }
 
-    // 5. Close
-    at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
+    at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR");
     return (strstr(g_rx, "SEND OK") != NULL) || (strstr(g_rx, "200 OK") != NULL);
 }
 
-
-
-//  TELEGRAM SENDER (via the HTTPS relay, since the ESP-01's AT firmware can only do plain HTTP and Telegram requires HTTPS)
-
+//  TELEGRAM SENDER (via the HTTPS relay)
 
 static bool send_telegram_via_relay(const char *message)
 {
-    // Connection id 1 — id 0 is used by send_to_thingspeak()
     if (!esp_open_tcp(1, RELAY_HOST, RELAY_IP, RELAY_PORT, "[TG]")) {
         return false;
     }
@@ -968,41 +769,32 @@ static bool send_telegram_via_relay(const char *message)
     int req_len = strlen(query);
 
     snprintf(g_tx, BUF, "AT+CIPSEND=1,%d\r\n", req_len);
-    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[TG] No > prompt\n");
-            at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 1000
+            at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR");
             return false;
         }
     }
 
     printf("[TG] Sending: %s\n", query);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
-        at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+    if (esp_read(3000, "CLOSED") <= 0) {
+        at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR");
         return false;
     }
 
-    // Check the HTTP status line, not the JSON body
     if (strstr(g_rx, "200 OK")) {
         printf("[TG] Message sent OK\n");
     } else {
         printf("[TG] Unexpected response — check relay logs / RELAY_SECRET\n");
     }
 
-    at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+    at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR");
     return strstr(g_rx, "200 OK") != NULL;
 }
 
-
-
-#include <atomic>
-
-//  SUPABASE BRIDGE (via the same relay, POST with a form body)
-
-
-static std::atomic<uint32_t> g_seq{0}; // 'seq' is an increasing counter shared across send functions to deduplicate retries
-
+static std::atomic<uint32_t> g_seq{0};
 
 //SUPABASE
 static bool send_sensor_telemetry_via_relay(float temperature, float humidity, float power)
@@ -1025,7 +817,6 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
         (unsigned long)g_seq++);
     int body_len = strlen(body);
 
-    // Connection id 2 -- id 0 is ThingSpeak, id 1 is Telegram
     if (!esp_open_tcp(2, RELAY_HOST, RELAY_IP, RELAY_PORT, "[SB]")) {
         return false;
     }
@@ -1043,29 +834,28 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     int req_len = strlen(query);
 
     snprintf(g_tx, BUF, "AT+CIPSEND=2,%d\r\n", req_len);
-    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
-            at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 1000
+            at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR");
             return false;
         }
     }
 
     printf("[SB] Sending telemetry: %s\n", body);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
-        at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+    if (esp_read(3000, "CLOSED") <= 0) {
+        at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR");
         return false;
     }
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
-    printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
+    printf(ok ? "[SB] Telemetry logged OK\n" : "[SB] Unexpected response — check relay logs\n");
 
-    at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+    at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR");
     return ok;
 }
 
-//Telegram sender?
 static bool send_alert_log_via_relay(const char *level, const char *message, const char *category)
 {
     char encoded_msg[128];
@@ -1077,7 +867,6 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
         RELAY_SECRET, level, encoded_msg, category, (unsigned long)g_seq++);
     int body_len = strlen(body);
 
-    // Connection id 3 -- ids 0-2 are ThingSpeak/Telegram/telemetry
     if (!esp_open_tcp(3, RELAY_HOST, RELAY_IP, RELAY_PORT, "[SB]")) {
         return false;
     }
@@ -1095,36 +884,29 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
     int req_len = strlen(query);
 
     snprintf(g_tx, BUF, "AT+CIPSEND=3,%d\r\n", req_len);
-    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
+    if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
-            at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 1000
+            at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR");
             return false;
         }
     }
 
     printf("[SB] Sending alert: %s\n", body);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
-        at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+    if (esp_read(3000, "CLOSED") <= 0) {
+        at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR");
         return false;
     }
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
-    printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n"); //ERROR CHECK
+    printf(ok ? "[SB] Alert logged OK\n" : "[SB] Unexpected response — check relay logs\n");
 
-    at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 2000
+    at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR");
     return ok;
 }
 
-
-
-//  DEVICE STATE PUSH (keypad -> relay -> Supabase)
-//
-//  Pushes a single field/value to the relay's new POST /device-state route,
-//  mirroring send_sensor_telemetry_via_relay()'s shape. Reuses connection
-//  id 4 -- the same one poll_device_state_via_relay() uses -- since both
-//  only ever run sequentially on networkThread, never concurrently.
+//  DEVICE STATE PUSH
 
 static bool send_device_state_via_relay(const char *field, bool value)
 {
@@ -1161,7 +943,7 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
     printf("[DS] Pushing %s=%s\n", field, value ? "true" : "false");
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
         return false;
     }
@@ -1169,7 +951,6 @@ static bool send_device_state_via_relay(const char *field, bool value)
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[DS] Push OK\n" : "[DS] Unexpected response — check relay logs\n");
 
-    // Update confirmed values on successful push
     if (ok) {
         if (strcmp(field, "main_lighting") == 0) {
             confirmed_lighting_mutex.lock();
@@ -1183,10 +964,6 @@ static bool send_device_state_via_relay(const char *field, bool value)
             confirmed_fan_mutex.lock();
             confirmed_fan_power = value;
             confirmed_fan_mutex.unlock();
-        } else if (strcmp(field, "fan_speed") == 0) {
-            confirmed_fan_mutex.lock();
-            confirmed_fan_speed = (uint8_t)atoi(field);  // field is actually value here
-            confirmed_fan_mutex.unlock();
         } else if (strcmp(field, "door_locked") == 0) {
             confirmed_door_mutex.lock();
             confirmed_door_locked = value;
@@ -1198,39 +975,23 @@ static bool send_device_state_via_relay(const char *field, bool value)
     return ok;
 }
 
-
-
-//  DEVICE STATE POLL (Command Center Phase 1 -- mainLighting only)
-//
-//  Polls the relay's /device-state route (reads device_states.main_lighting
-//  from Supabase) and drives led_mainLighting to match. Only writes the pin
-//  when the value actually changes, so we're not toggling it every cycle.
-
+//  DEVICE STATE POLL
 
 static bool last_main_lighting = false;
 static bool main_lighting_known = false;
-
 static bool last_blind_open = false;
 static bool blind_known = false;
-
 static uint8_t last_fan_speed = 0;
 static bool last_fan_power = false;
-
 static bool last_door_locked = true;
 static bool door_locked_known = false;
 
-// Actuation lives in exactly one place per device, called both by the
-// periodic poll below (for dashboard-initiated changes) and by the keypad
-// handler in network_task() (for physical-button-initiated changes) --
-// keeps a single source of truth for what "apply this state to hardware"
-// means, and gives the keypad instant feedback instead of waiting for the
-// next poll cycle to notice its own change.
 static void apply_main_lighting(bool on)
 {
     if (on) {
-        set_brightness(get_brightness());  // Apply current brightness PWM
+        set_brightness(get_brightness());
     } else {
-        led_mainLighting_pwm.write(0.0f);  // Off = 0% duty
+        led_mainLighting_pwm.write(0.0f);
     }
     last_main_lighting = on;
     main_lighting_known = true;
@@ -1239,9 +1000,6 @@ static void apply_main_lighting(bool on)
 
 static void apply_blind(bool open)
 {
-    // Blocks the caller for WAIT_TIME_MS_0 while the curtain moves --
-    // acceptable since blind only changes rarely (dashboard/keypad toggle),
-    // unlike the RFID/telemetry sends which need to stay snappy.
     motor_position_to_angle(open ? PULSE_WIDTH_90_DEGREE : PULSE_WIDTH_0_DEGREE);
     last_blind_open = open;
     blind_known = true;
@@ -1276,7 +1034,6 @@ static void apply_door_lock(bool locked)
 
 static bool poll_device_state_via_relay(void)
 {
-    // Connection id 4 -- ids 0-3 are ThingSpeak/Telegram/telemetry/alert-log
     if (!esp_open_tcp(4, RELAY_HOST, RELAY_IP, RELAY_PORT, "[DS]")) {
         return false;
     }
@@ -1302,185 +1059,130 @@ static bool poll_device_state_via_relay(void)
     }
 
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
         return false;
     }
+
     bool ok = strstr(g_rx, "200 OK") != NULL;
-        if (ok) {
-            bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
-                               || strstr(g_rx, "\"main_lighting\": true") != NULL;
+    if (ok) {
+        bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
+                           || strstr(g_rx, "\"main_lighting\": true") != NULL;
 
-            // Parse lighting_brightness from response
-            uint8_t brightness_state = 100;
-            char *brightness_ptr = strstr(g_rx, "\"lighting_brightness\":");
-            if (brightness_ptr) {
-                char *num_start = brightness_ptr + strlen("\"lighting_brightness\":");
-                brightness_state = (uint8_t)atoi(num_start);
-            }
-
-            // Ignore remote value if local change happened recently (15s grace period)
-            uint64_t now = Kernel::get_ms_count();
-            lighting_timestamp_mutex.lock();
-            bool lighting_recent = (now - last_lighting_local_change <= 15000);
-            lighting_timestamp_mutex.unlock();
-
-            // Use confirmed value from successful push if available
-            confirmed_lighting_mutex.lock();
-            bool confirmed_lighting_known = (confirmed_lighting != false); // only true if we actually pushed a value
-            bool use_confirmed_lighting = confirmed_lighting_known && (confirmed_lighting != main_lighting);
-            bool confirmed = confirmed_lighting;
-            confirmed_lighting_mutex.unlock();
-
-            if (!main_lighting_known || main_lighting != last_main_lighting) {
-                            if (!lighting_recent) {
-                                                // After grace period: apply remote value (Supabase is source of truth)
-                                                if (main_lighting) {
-                                                    set_brightness(brightness_state);
-                                                }
-                                                apply_main_lighting(main_lighting);
-                                            } else {
-                                                printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\n");
-                                            }
-                                        }
-
-            bool blind = strstr(g_rx, "\"blind\":true") != NULL
-                              || strstr(g_rx, "\"blind\": true") != NULL;
-
-            if (!blind_known || blind != last_blind_open) {
-                uint64_t now = Kernel::get_ms_count();
-                blind_timestamp_mutex.lock();
-                bool blind_recent = (now - last_blind_local_change <= 15000);
-                blind_timestamp_mutex.unlock();
-
-                // Use confirmed value from successful push if available
-                confirmed_blind_mutex.lock();
-                            bool confirmed_blind_known = (confirmed_blind != false);
-                            bool use_confirmed_blind = confirmed_blind_known && (confirmed_blind != blind);
-                            bool confirmed = confirmed_blind;
-                            confirmed_blind_mutex.unlock();
-
-                if (!blind_recent) {
-                                    // After grace period: apply remote value (Supabase is source of truth)
-                                    request_blind_actuate(blind);
-                                } else {
-                                    printf("[DS] Ignoring remote blind (local change < 15s ago)\n");
-                                }
-            }
-
-            // Fan state
-            bool fan_power_state = strstr(g_rx, "\"fan_power\":true") != NULL
-                                || strstr(g_rx, "\"fan_power\": true") != NULL;
-            uint8_t fan_speed_state = 0;
-            char *fan_speed_ptr = strstr(g_rx, "\"fan_speed\":");
-            if (fan_speed_ptr) {
-                char *num_start = fan_speed_ptr + strlen("\"fan_speed\":");
-                fan_speed_state = (uint8_t)atoi(num_start);
-            }
-
-            if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
-                uint64_t now = Kernel::get_ms_count();
-                fan_timestamp_mutex.lock();
-                bool fan_recent = (now - last_fan_local_change <= 15000);
-                fan_timestamp_mutex.unlock();
-
-                // Use confirmed value from successful push if available
-                confirmed_fan_mutex.lock();
-                            bool confirmed_fan_power_known = (confirmed_fan_power != false);
-                            bool use_confirmed_fan_power = confirmed_fan_power_known && (confirmed_fan_power != fan_power_state);
-                            uint8_t confirmed_fan_speed_val = confirmed_fan_speed;
-                            bool confirmed_fan_power_val = confirmed_fan_power;
-                            confirmed_fan_mutex.unlock();
-
-                if (!fan_recent) {
-                                    // After grace period: apply remote value (Supabase is source of truth)
-                                    request_fan_actuate(fan_speed_state, fan_power_state);
-                                } else {
-                                    printf("[DS] Ignoring remote fan (local change < 15s ago)\n");
-                                }
-            }
-
-            // Door lock state
-            bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
-                                  || strstr(g_rx, "\"smart_lock\": true") != NULL;
-
-            if (door_locked_state != get_door_locked()) {
-                uint64_t now = Kernel::get_ms_count();
-                door_timestamp_mutex.lock();
-                bool door_recent = (now - last_door_local_change <= 15000);
-                door_timestamp_mutex.unlock();
-
-                // Use confirmed value from successful push if available
-                confirmed_door_mutex.lock();
-                            bool confirmed_door_known = (confirmed_door_locked != true);
-                            bool use_confirmed_door = confirmed_door_known && (confirmed_door_locked != door_locked_state);
-                            bool confirmed = confirmed_door_locked;
-                            confirmed_door_mutex.unlock();
-
-                if (!door_recent) {
-                                    // After grace period: apply remote value (Supabase is source of truth)
-                                    request_door_actuate(door_locked_state);
-                                } else {
-                                    printf("[DS] Ignoring remote door (local change < 15s ago)\n");
-                                }
-            }
-        } else {
-            printf("[DS] Unexpected response — check relay logs\\n");
+        uint8_t brightness_state = 100;
+        char *brightness_ptr = strstr(g_rx, "\"lighting_brightness\":");
+        if (brightness_ptr) {
+            char *num_start = brightness_ptr + strlen("\"lighting_brightness\":");
+            brightness_state = (uint8_t)atoi(num_start);
         }
+
+        uint64_t now = now_ms();
+        lighting_timestamp_mutex.lock();
+        bool lighting_recent = (now - last_lighting_local_change <= 15000);
+        lighting_timestamp_mutex.unlock();
+
+        if (!main_lighting_known || main_lighting != last_main_lighting) {
+            if (!lighting_recent) {
+                if (main_lighting) {
+                    set_brightness(brightness_state);
+                }
+                apply_main_lighting(main_lighting);
+            } else {
+                printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\n");
+            }
+        }
+
+        bool blind = strstr(g_rx, "\"blind\":true") != NULL
+                   || strstr(g_rx, "\"blind\": true") != NULL;
+
+        if (!blind_known || blind != last_blind_open) {
+            blind_timestamp_mutex.lock();
+            bool blind_recent = (now_ms() - last_blind_local_change <= 15000);
+            blind_timestamp_mutex.unlock();
+
+            if (!blind_recent) {
+                request_blind_actuate(blind);
+            } else {
+                printf("[DS] Ignoring remote blind (local change < 15s ago)\n");
+            }
+        }
+
+        bool fan_power_state = strstr(g_rx, "\"fan_power\":true") != NULL
+                            || strstr(g_rx, "\"fan_power\": true") != NULL;
+        uint8_t fan_speed_state = 0;
+        char *fan_speed_ptr = strstr(g_rx, "\"fan_speed\":");
+        if (fan_speed_ptr) {
+            char *num_start = fan_speed_ptr + strlen("\"fan_speed\":");
+            fan_speed_state = (uint8_t)atoi(num_start);
+        }
+
+        if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
+            fan_timestamp_mutex.lock();
+            bool fan_recent = (now_ms() - last_fan_local_change <= 15000);
+            fan_timestamp_mutex.unlock();
+
+            if (!fan_recent) {
+                request_fan_actuate(fan_speed_state, fan_power_state);
+            } else {
+                printf("[DS] Ignoring remote fan (local change < 15s ago)\n");
+            }
+        }
+
+        bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
+                              || strstr(g_rx, "\"smart_lock\": true") != NULL;
+
+        if (door_locked_state != get_door_locked()) {
+            door_timestamp_mutex.lock();
+            bool door_recent = (now_ms() - last_door_local_change <= 15000);
+            door_timestamp_mutex.unlock();
+
+            if (!door_recent) {
+                request_door_actuate(door_locked_state);
+            } else {
+                printf("[DS] Ignoring remote door (local change < 15s ago)\n");
+            }
+        }
+    } else {
+        printf("[DS] Unexpected response — check relay logs\n");
+    }
 
     at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
     return ok;
 }
 
-
-
 //  ESP-01 INIT
-
 
 static bool wifi_connected = false;
 
 static void esp_init(void)
 {
     printf("=== ESP-01 init ===\n");
-    at("AT+RST\r\n",      2000, "ready");         // Reduced from 3000
-    at("AT\r\n",          500,  "OK");            // Reduced from 1000
-    at("AT+CWMODE=1\r\n", 500,  "OK");            // Reduced from 1000
+    at("AT+RST\r\n",      2000, "ready");
+    at("AT\r\n",          500,  "OK");
+    at("AT+CWMODE=1\r\n", 500,  "OK");
 
     printf(">> Joining WiFi...\n");
     snprintf(g_tx, BUF,
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
-    esp_read(8000, "GOT IP", "FAIL"); // Reduced from 12000 -- exits as soon as the real join result is known
+    esp_read(8000, "GOT IP", "FAIL");
 
     if      (strstr(g_rx, "GOT IP")) { wifi_connected = true;  printf("[WIFI] Connected!\n"); }
     else if (strstr(g_rx, "FAIL"))   { wifi_connected = false; printf("[WIFI] FAILED — check SSID/password\n"); }
 
     thread_sleep_for(2000);
-    at("AT+CIFSR\r\n",    500, "OK");  // Reduced from 1000
-    at("AT+CIPMUX=1\r\n",  500, "OK"); // Reduced from 1000
+    at("AT+CIFSR\r\n",    500, "OK");
+    at("AT+CIPMUX=1\r\n",  500, "OK");
     printf("=== ESP-01 ready ===\n");
 }
 
-// Recovers the link after repeated send failures.
-//
-// This deliberately re-runs the WHOLE init rather than just AT+CWJAP. The
-// ESP-01 watchdog-resets on its own fairly often here (the boot banner
-// reports "rst cause:4 / wdt reset"), and a reset silently drops CIPMUX
-// back to 0. In single-connection mode every "AT+CIPSTART=<id>,..." is
-// rejected with "Link type ERROR" and "AT+CIPCLOSE=<id>" answers "MUX=0",
-// so a CWJAP-only reconnect rejoins the AP and still cannot open a single
-// socket -- the board never recovers until it is power-cycled. Re-running
-// esp_init() restores CWMODE and CIPMUX along with the join.
 static void wifi_reconnect(void)
 {
     printf("[WIFI] Reconnecting...\n");
     esp_init();
 }
 
-
-
-//  NETWORK TASK  — runs entirely on its own Thread every command to wait is here
-
+//  NETWORK TASK
 
 static void network_task(void)
 {
@@ -1489,29 +1191,23 @@ static void network_task(void)
     if (!wifi_connected) {
         printf("[ERROR] No WiFi — network thread halting. RFID scanning still runs.\n");
         led_Green = 0;
-        return;   // main() keeps running RFID/LEDs regardless
+        return;
     }
-    led_Green = 1;   // simple "network thread alive" indicator, optional
-
+    led_Green = 1;
 
     uint64_t last_send    = 0;
     uint64_t last_tg_send = 0;
-
     uint64_t last_device_state_poll = 0;
-
-    // If wifi looks dead 3 times rejoin
     int consecutive_failures = 0;
 
     while (1) {
-        uint64_t now = Kernel::get_ms_count();
+        uint64_t now = now_ms();
 
-        //  Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS
         int rfid_now = get_latest_rfid();
         if (rfid_now != 0 && now - last_tg_send >= TG_COOLDOWN_MS) {
-            // Consume RFID value so we only send once per scan
             set_latest_rfid(0);
-            last_tg_send = now;                                                             //TELEGRAM MESSAGE YO
-            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!"; //CHANGE THE THINGS HERE TO CHANGE WHAT IS BEING SAID IN TELEGRAM
+            last_tg_send = now;
+            const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!";
             if (send_telegram_via_relay(msg)) {
                 consecutive_failures = 0;
             } else {
@@ -1527,12 +1223,7 @@ static void network_task(void)
             }
         }
 
-        // ---- Keypad-requested device state changes ----
-        // Apply to hardware immediately (instant physical feedback) rather
-        // than waiting for the next poll cycle to notice its own change,
-        // then push to Supabase so the dashboard stays in sync.
         if (consume_pending_blind_toggle()) {
-            // Request blind actuation on main thread (blocks for ~2s)
             request_blind_actuate(!last_blind_open);
             if (!send_device_state_via_relay("blind", last_blind_open)) {
                 printf("[WARN] Blind state push failed\n");
@@ -1548,11 +1239,9 @@ static void network_task(void)
             }
         }
 
-        // ---- Fan/Door Lock state changes from keypad ----
         uint8_t fan_speed_req;
         bool fan_power_req;
         if (consume_pending_fan_actuate(&fan_speed_req, &fan_power_req)) {
-            // Request fan actuation on main thread
             request_fan_actuate(fan_speed_req, fan_power_req);
             if (!send_device_state_via_relay("fan_speed", fan_speed_req)) {
                 printf("[WARN] Fan speed push failed\n");
@@ -1566,7 +1255,6 @@ static void network_task(void)
 
         bool door_locked_req;
         if (consume_pending_door_actuate(&door_locked_req)) {
-            // Request door lock actuation on main thread
             request_door_actuate(door_locked_req);
             if (!send_device_state_via_relay("door_locked", door_locked_req)) {
                 printf("[WARN] Door lock push failed\n");
@@ -1574,7 +1262,6 @@ static void network_task(void)
             }
         }
 
-        // ---- Command Center Phase 1: poll mainLighting from the dashboard ----
         if (now - last_device_state_poll >= DEVICE_STATE_POLL_MS) {
             last_device_state_poll = now;
             if (poll_device_state_via_relay()) {
@@ -1585,33 +1272,23 @@ static void network_task(void)
             }
         }
 
-        // ---- ThingSpeak & Supabase telemetry ----
         if (now - last_send >= SEND_INTERVAL_MS) {
             last_send = now;
 
-            // Read sensors ONCE
             read_dht11();
             float temperature = read_temperature();
             float humidity    = read_humidity();
             float current     = read_current();
             int   rfid        = get_latest_rfid();
 
-            // Prepare ThingSpeak fields
             fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
             fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);
             fmt_float(ts_fields[2].value, sizeof(ts_fields[2].value), current);
             snprintf(ts_fields[3].value, sizeof(ts_fields[3].value), "%d", rfid);
 
-            // These run one after the other, not concurrently -- despite what
-            // an older comment here used to claim. send_to_thingspeak()
-            // finishes entirely (CIPCLOSE included) before the Supabase send
-            // begins. Overlapping them would need per-connection buffers and
-            // a "+IPD,<id>," demultiplexer, since both share one UART and one
-            // g_tx/g_rx pair. AT+CIPMUX=1 makes it possible; nothing does it.
-            bool ts_ok = send_to_thingspeak();                 // conn id 0
-            bool sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current); // conn id 2
+            bool ts_ok = send_to_thingspeak();
+            bool sb_ok = send_sensor_telemetry_via_relay(temperature, humidity, current);
 
-            // Handle results
             if (ts_ok && sb_ok) {
                 consecutive_failures = 0;
             } else {
@@ -1619,7 +1296,6 @@ static void network_task(void)
                 consecutive_failures++;
             }
 
-            // Debug output (optional - remove for max speed)
             printf("\n[DATA]\n");
             for (int i = 0; i < TS_NUM_FIELDS; i++) {
                 if (ts_fields[i].field == 0) continue;
@@ -1627,40 +1303,34 @@ static void network_task(void)
                         ts_fields[i].field, ts_fields[i].label, ts_fields[i].value);
             }
 
-
             if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
                 consecutive_failures = 0;
                 wifi_reconnect();
             }
 
-            thread_sleep_for(10);   // network task doesn't need a tight loop changed from 50 to 10
+            thread_sleep_for(10);
         }
     }
 }
 
-
-
 //  MAIN — owns RFID polling + LEDs only
-
-
 
 static Thread networkThread(osPriorityNormal, 4096);
 
-
-int main(void) //RMAIN
+int main(void)
 {
-    mfrc522.PCD_Init();     //Initialisation for RFID
-    motor_init();           //Move curtain servo to its home position
+    mfrc522.PCD_Init();
+    motor_init();
 
-    // Fan servo (360° continuous) + Door lock initialization
     fanServo.period_ms(PERIOD_WIDTH);
-    fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US);  // Start at neutral (stopped)
-    
-    // LED PWM initialization for brightness control
-    led_mainLighting_pwm.period_ms(10);  // 100Hz PWM
-    led_mainLighting_pwm.write(1.0f);    // Start at 100% brightness
-    
-    doorLock = DOOR_LOCK_LOCKED;  // Start locked (HIGH = locked)
+    fanServo.pulsewidth_us(FAN_SERVO_NEUTRAL_US);
+
+    // Main light PWM init on PC_9 (TIM3_CH4): 100Hz, start at full brightness
+    led_mainLighting_pwm.period_ms(10);
+    led_mainLighting_pwm.write(1.0f);
+    g_brightness = 100;
+
+    doorLock = DOOR_LOCK_LOCKED;
 
     lcd_init();
     keypad_init();
@@ -1669,120 +1339,97 @@ int main(void) //RMAIN
 
     printf("\n=== STM32 + ESP-01 -> ThingSpeak ===\n");
 
-    //LCD PRINT BASIC MESSAGES
+    lcdmessage(Message1, 1);
+    lcdmessage(Message2, 2);
 
-    lcdmessage(Message1, 1); //Message 1
-    lcdmessage(Message2, 2); //Message 2 on second line
-
-    // Allocate large buffers on heap to avoid stack overflow
     g_tx = new (std::nothrow) char[BUF];
     g_rx = new (std::nothrow) char[RX_BUF];
     if (!g_tx || !g_rx) {
-        printf("[ERROR] Heap allocation failed for buffers\\n");
-        while (1) thread_sleep_for(1000); // Halt
+        printf("[ERROR] Heap allocation failed for buffers\n");
+        while (1) thread_sleep_for(1000);
     }
 
-    // Kick off WiFi/ThingSpeak/Telegram on its own thread so it can
-    // never block RFID polling below, even during multi-second AT waits.
     networkThread.start(network_task);
 
     int rfid = 0;
 
     while (1) {
-            // Check authentication state
-            bool auth_unlocked = is_keypad_unlocked();
-            bool in_fan_menu = is_in_fan_menu();
-            uint64_t auth_remaining = get_auth_remaining_ms();
-            bool in_fan_submenu = in_fan_menu;
+        bool auth_unlocked = is_keypad_unlocked();
+        bool in_fan_menu = is_in_fan_menu();
+        uint64_t auth_remaining = get_auth_remaining_ms();
+        bool in_fan_submenu = in_fan_menu;
 
-            // ---- Keypad handling -----
-            if (key_pending) {
-                key_pending = false;
-                char key = last_key;
+        if (key_pending) {
+            key_pending = false;
+            char key = last_key;
 
-                // Show appropriate LCD message based on auth state
-                if (!auth_unlocked) {
-                    lcdmessage(MessageLocked, 1); // "Tagg RFID"
-                    lcdmessage(MessageLocked2, 2); // "Tagg RFID" on second line
-                } else {
-                    // Show remaining time
-                    char auth_msg[20];
-                    snprintf(auth_msg, sizeof(auth_msg), "Auth: %lus", auth_remaining / 1000);
-                    lcdmessage(auth_msg, 1);
-                    lcdmessage(Message2, 2); // "3.Lighting 4.Fans"
-                }
-
-                if (!auth_unlocked) {
-                    // Keypad locked - ignore key presses except for showing auth message
-                    // User must scan RFID first
-                } else if (in_fan_submenu) {
-                    // In fan speed selection sub-menu
-                    uint8_t speed = fan_menu_selection_to_speed(key);
-                    if (speed != 255) {
-                        // Valid fan speed selection
-                        if (speed == 0) {
-                            // Off
-                            fan_mutex.lock();
-                            fan_power = false;
-                            fan_mutex.unlock();
-                            request_fan_actuate(0, false);
-                            lcdmessage("Fan: OFF", 1);
-                        } else {
-                            // Low/Med/High
-                            fan_mutex.lock();
-                            fan_power = true;
-                            fan_speed = speed;
-                            fan_mutex.unlock();
-                            request_fan_actuate(speed, true);
-                            const char* speed_names[] = {"", "LOW", "MED", "HIGH"};
-                            char msg[20];
-                            snprintf(msg, sizeof(msg), "Fan: %s (%u%%)", 
-                                    (speed <= 33) ? "LOW" : (speed <= 66) ? "MED" : "HIGH", speed);
-                            lcdmessage(msg, 1);
-                        }
-                        exit_fan_menu();
-                        lcdmessage("Speed Set", 2);
-                        thread_sleep_for(1000); // Show confirmation briefly
-                    } else {
-                        // Invalid key in fan menu
-                        lcdmessage("Invalid Speed", 1);
-                    }
-                    refresh_fan_menu_timeout();
-                } else {
-                    // Normal keypad operation (authenticated, not in fan menu)
-                    // Show menu on LCD
-                    lcdmessage(Message1, 1); // "1.Blind 2.Window"
-                    lcdmessage(Message2, 2); // "3.Lighting 4.Fans"
-
-                    switch (key) {
-                        case '1':
-                            printf("1 is pressed -- toggling Blind\n");
-                            request_blind_toggle();
-                            break;
-                        case '2':
-                            printf("2 is pressed -- Window not wired up yet\n");
-                            // TODO: needs a second servo pin, not yet wired
-                            break;
-                        case '3':
-                            printf("3 is pressed -- toggling Lighting\n");
-                            request_lighting_toggle();
-                            break;
-                        case '4':
-                            printf("4 is pressed -- Fan Speed Menu\n");
-                            enter_fan_menu();
-                            lcdmessage(FanspeedM, 1); // "1:Low 2:Med"
-                            lcdmessage(FanspeedM2, 2); // "3:High 4:Off"
-                            break;
-                        default:
-                            lcdmessage(Message3, 1); // "Invalid try again"
-                            lcdmessage(Message3, 2);
-                            break;
-                    }
-                }
+            if (!auth_unlocked) {
+                lcdmessage(MessageLocked, 1);
+                lcdmessage(MessageLocked2, 2);
+            } else {
+                char auth_msg[20];
+                snprintf(auth_msg, sizeof(auth_msg), "Auth: %lus", auth_remaining / 1000);
+                lcdmessage(auth_msg, 1);
+                lcdmessage(Message2, 2);
             }
 
-            // ---- Consume pending blind actuation request from network thread ----
-         }
+            if (!auth_unlocked) {
+                // Keypad locked - ignore key presses
+            } else if (in_fan_submenu) {
+                uint8_t speed = fan_menu_selection_to_speed(key);
+                if (speed != 255) {
+                    if (speed == 0) {
+                        fan_mutex.lock();
+                        fan_power = false;
+                        fan_mutex.unlock();
+                        request_fan_actuate(0, false);
+                        lcdmessage("Fan: OFF", 1);
+                    } else {
+                        fan_mutex.lock();
+                        fan_power = true;
+                        fan_speed = speed;
+                        fan_mutex.unlock();
+                        request_fan_actuate(speed, true);
+                        char msg[20];
+                        snprintf(msg, sizeof(msg), "Fan: %s (%u%%)",
+                                (speed <= 33) ? "LOW" : (speed <= 66) ? "MED" : "HIGH", speed);
+                        lcdmessage(msg, 1);
+                    }
+                    exit_fan_menu();
+                    lcdmessage("Speed Set", 2);
+                    thread_sleep_for(1000);
+                } else {
+                    lcdmessage("Invalid Speed", 1);
+                }
+                refresh_fan_menu_timeout();
+            } else {
+                lcdmessage(Message1, 1);
+                lcdmessage(Message2, 2);
+
+                switch (key) {
+                    case '1':
+                        printf("1 is pressed -- toggling Blind\n");
+                        request_blind_toggle();
+                        break;
+                    case '2':
+                        printf("2 is pressed -- Window not wired up yet\n");
+                        break;
+                    case '3':
+                        printf("3 is pressed -- toggling Lighting\n");
+                        request_lighting_toggle();
+                        break;
+                    case '4':
+                        printf("4 is pressed -- Fan Speed Menu\n");
+                        enter_fan_menu();
+                        lcdmessage(FanspeedM, 1);
+                        lcdmessage(FanspeedM2, 2);
+                        break;
+                    default:
+                        lcdmessage(Message3, 1);
+                        lcdmessage(Message3, 2);
+                        break;
+                }
+            }
         }
 
         // ---- Consume pending blind actuation request from network thread ----
@@ -1798,7 +1445,7 @@ int main(void) //RMAIN
             apply_fan(fan_speed_req, fan_power_req);
         }
 
-        // ---- Consume pending door lock actuation request from network thread ----
+        // ---- Consume pending door lock actuation request ----
         bool door_locked_req;
         if (consume_pending_door_actuate(&door_locked_req)) {
             apply_door_lock(door_locked_req);
@@ -1808,26 +1455,20 @@ int main(void) //RMAIN
         rfid = read_RFID();
         set_latest_rfid(rfid);
 
-        // ---- RFID Authentication: unlock keypad on successful scan ----
         if (rfid == 1 || rfid == 2) {
             set_keypad_unlocked(true);
             printf("[AUTH] Keypad unlocked for %d seconds\n", RFID_UNLOCK_DURATION_MS / 1000);
         }
 
-        // ---- Blue LED follows RFID ------------------------------
         if (rfid == 1) {
             led_Blue = 1;
             led_Red  = 0;
-            // Don't sleep for 16000ms - that blocks the whole loop!
-            // Just set LEDs, let the 10ms loop handle timing
         }
         if (rfid == 0) {
             led_Blue = 0;
             led_Red  = 1;
         }
 
-
-
-        thread_sleep_for(10);   // 10ms yield
+        thread_sleep_for(10);
     }
 }
