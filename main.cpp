@@ -13,8 +13,8 @@
 
 //  DONOTEDIT — no need to edit below this line unless programming your own stuff
 
-#define BUF      256
-#define RX_BUF   512
+#define BUF      512
+#define RX_BUF   1024
 
 static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
 static char g_tx[BUF];
