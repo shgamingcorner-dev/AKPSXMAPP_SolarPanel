@@ -511,10 +511,10 @@ static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *st
       // landed before any premature cutoff).
       while (Kernel::get_ms_count() - start < (uint32_t)wait_ms) {
           if (esp.readable()) {
-              int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);
+              int chunk = esp.read(g_rx + n, RX_BUF - 1 - n);
               if (chunk > 0) {
                   n += chunk;
-                  if (n >= (int)(sizeof(g_rx) - 1)) break;
+                  if (n >= (int)(RX_BUF - 1)) break;
                   g_rx[n] = '\0'; // null-terminate so strstr below only sees bytes actually received
                   if ((stop1 && strstr(g_rx, stop1)) || (stop2 && strstr(g_rx, stop2))) {
                       break;
@@ -537,10 +537,10 @@ static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *st
 //     thread_sleep_for(wait_ms);
 //     int n = 0;
 //     while (esp.readable()) {
-//         int chunk = esp.read(g_rx + n, sizeof(g_rx) - 1 - n);                    //OLD
+//         int chunk = esp.read(g_rx + n, RX_BUF - 1 - n);                    //OLD
 //         if (chunk <= 0) break;
 //         n += chunk;
-//         if (n >= (int)(sizeof(g_rx) - 1)) break;
+//         if (n >= (int)(RX_BUF - 1)) break;
 //         thread_sleep_for(20);
 //     }
 //     if (n > 0) {
@@ -587,7 +587,7 @@ static bool esp_close(int id)
 // outright whether DNS was the problem.
 static bool esp_open_tcp(int id, const char *host, const char *ip_fallback, int port, const char *tag)
 {
-    snprintf(g_tx, sizeof(g_tx),
+    snprintf(g_tx, BUF,
         "AT+CIPSTART=%d,\"TCP\",\"%s\",%d\r\n", id, host, port);
     at(g_tx, 8000, ",CONNECT", "ERROR");
     if (strstr(g_rx, ",CONNECT")) {
@@ -602,7 +602,7 @@ static bool esp_open_tcp(int id, const char *host, const char *ip_fallback, int 
     }
 
     printf("%s retrying via literal IP %s -- bypasses ESP DNS\n", tag, ip_fallback);
-    snprintf(g_tx, sizeof(g_tx),
+    snprintf(g_tx, BUF,
         "AT+CIPSTART=%d,\"TCP\",\"%s\",%d\r\n", id, ip_fallback, port);
     at(g_tx, 8000, ",CONNECT", "ERROR");
     if (strstr(g_rx, ",CONNECT")) {
@@ -662,7 +662,7 @@ static bool send_to_thingspeak(void)
     int req_len = strlen(query);
 
     // 3. CIPSEND
-    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=0,%d\r\n", req_len);
+    snprintf(g_tx, BUF, "AT+CIPSEND=0,%d\r\n", req_len);
     if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[TS] No > prompt\n");
@@ -714,7 +714,7 @@ static bool send_telegram_via_relay(const char *message)
 
     int req_len = strlen(query);
 
-    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=1,%d\r\n", req_len);
+    snprintf(g_tx, BUF, "AT+CIPSEND=1,%d\r\n", req_len);
     if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[TG] No > prompt\n");
@@ -789,7 +789,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
 
     int req_len = strlen(query);
 
-    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=2,%d\r\n", req_len);
+    snprintf(g_tx, BUF, "AT+CIPSEND=2,%d\r\n", req_len);
     if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
@@ -841,7 +841,7 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 
     int req_len = strlen(query);
 
-    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=3,%d\r\n", req_len);
+    snprintf(g_tx, BUF, "AT+CIPSEND=3,%d\r\n", req_len);
     if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) { // Reduced from 2000
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[SB] No > prompt\n");
@@ -897,7 +897,7 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
     int req_len = strlen(query);
 
-    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=4,%d\r\n", req_len);
+    snprintf(g_tx, BUF, "AT+CIPSEND=4,%d\r\n", req_len);
     if (at(g_tx, 1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
         if (esp_read(1000, ">", "ERROR") <= 0 || !strstr(g_rx, ">")) {
             printf("[DS] No > prompt\n");
@@ -1002,7 +1002,7 @@ static bool poll_device_state_via_relay(void)
 
     int req_len = strlen(query);
 
-    snprintf(g_tx, sizeof(g_tx), "AT+CIPSEND=4,%d\r\n", req_len);
+    snprintf(g_tx, BUF, "AT+CIPSEND=4,%d\r\n", req_len);
     at(g_tx, 1000, ">", "ERROR");
     if (!strstr(g_rx, ">")) {
         esp_read(1000, ">", "ERROR");
@@ -1079,7 +1079,7 @@ static void esp_init(void)
     at("AT+CWMODE=1\r\n", 500,  "OK");            // Reduced from 1000
 
     printf(">> Joining WiFi...\n");
-    snprintf(g_tx, sizeof(g_tx),
+    snprintf(g_tx, BUF,
         "AT+CWJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
     esp_send(g_tx);
     esp_read(8000, "GOT IP", "FAIL"); // Reduced from 12000 -- exits as soon as the real join result is known
