@@ -47,10 +47,13 @@ static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 // LCD
 unsigned char key2, outChar, outChar2, outChar3;
 unsigned char passWord[] = {'0', '0', '0', '0'};
+char MessageLocked [ ] = "Door Locked";
+char MessageLocked2 [ ] = "Tag RFID";
 char Message1 [ ] = "1.Blind 2.Window";
 char Message2 [ ] = "3.Lighting 4.Fans ";
 char Message3 [ ] = "Invalid try again";
-
+char FanspeedM [ ] = "1:Low 2:Med";
+char FanspeedM2 [ ] = "3:High 4:Off";
 // Timestamp variables for grace period (must be before functions that use them)
 // Protected by their own mutexes for thread-safe access between main thread (writes) and network thread (reads)
 static uint64_t last_lighting_local_change = 0;
@@ -1106,7 +1109,8 @@ static bool poll_device_state_via_relay(void)
 
             // Use confirmed value from successful push if available
             confirmed_lighting_mutex.lock();
-            bool use_confirmed_lighting = confirmed_lighting != main_lighting;
+            bool confirmed_lighting_known = (confirmed_lighting != false); // only true if we actually pushed a value
+            bool use_confirmed_lighting = confirmed_lighting_known && (confirmed_lighting != main_lighting);
             bool confirmed = confirmed_lighting;
             confirmed_lighting_mutex.unlock();
 
@@ -1131,9 +1135,10 @@ static bool poll_device_state_via_relay(void)
 
                 // Use confirmed value from successful push if available
                 confirmed_blind_mutex.lock();
-                bool use_confirmed_blind = confirmed_blind != blind;
-                bool confirmed = confirmed_blind;
-                confirmed_blind_mutex.unlock();
+                            bool confirmed_blind_known = (confirmed_blind != false);
+                            bool use_confirmed_blind = confirmed_blind_known && (confirmed_blind != blind);
+                            bool confirmed = confirmed_blind;
+                            confirmed_blind_mutex.unlock();
 
                 if (!blind_recent) {
                     bool apply_value = use_confirmed_blind ? confirmed : blind;
@@ -1161,10 +1166,11 @@ static bool poll_device_state_via_relay(void)
 
                 // Use confirmed value from successful push if available
                 confirmed_fan_mutex.lock();
-                bool use_confirmed_fan_power = confirmed_fan_power != fan_power_state;
-                bool confirmed_fan_power_val = confirmed_fan_power;
-                uint8_t confirmed_fan_speed_val = confirmed_fan_speed;
-                confirmed_fan_mutex.unlock();
+                            bool confirmed_fan_power_known = (confirmed_fan_power != false);
+                            bool use_confirmed_fan_power = confirmed_fan_power_known && (confirmed_fan_power != fan_power_state);
+                            uint8_t confirmed_fan_speed_val = confirmed_fan_speed;
+                            bool confirmed_fan_power_val = confirmed_fan_power;
+                            confirmed_fan_mutex.unlock();
 
                 if (!fan_recent) {
                     bool apply_power = (confirmed_fan_power != fan_power_state) ? confirmed_fan_power_val : fan_power_state;
@@ -1187,9 +1193,10 @@ static bool poll_device_state_via_relay(void)
 
                 // Use confirmed value from successful push if available
                 confirmed_door_mutex.lock();
-                bool use_confirmed_door = confirmed_door_locked != door_locked_state;
-                bool confirmed = confirmed_door_locked;
-                confirmed_door_mutex.unlock();
+                            bool confirmed_door_known = (confirmed_door_locked != true);
+                            bool use_confirmed_door = confirmed_door_known && (confirmed_door_locked != door_locked_state);
+                            bool confirmed = confirmed_door_locked;
+                            confirmed_door_mutex.unlock();
 
                 if (!door_recent) {
                     bool apply_value = use_confirmed_door ? confirmed : door_locked_state;
@@ -1475,7 +1482,6 @@ int main(void) //RMAIN
         // ---- Keypad: '1' toggles Blind, '3' toggles Lighting -----
         if (key_pending) {
             key_pending = false;
-
             lcdmessage(Message1, 1); //Message 1
             lcdmessage(Message2, 2); //Message 2 on second line
 
