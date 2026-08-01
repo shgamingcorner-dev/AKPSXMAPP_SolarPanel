@@ -120,6 +120,9 @@ static void request_fan_actuate(uint8_t speed, bool power)
     pending_fan_speed = speed;
     pending_fan_power = power;
     fan_actuate_mutex.unlock();
+
+    // Record local change time to suppress remote override for 5 seconds
+    last_fan_local_change = Kernel::get_ms_count();
 }
 
 static void request_door_actuate(bool locked)
@@ -128,6 +131,9 @@ static void request_door_actuate(bool locked)
     pending_door_actuate = true;
     pending_door_locked = locked;
     door_actuate_mutex.unlock();
+
+    // Record local change time to suppress remote override for 5 seconds
+    last_door_local_change = Kernel::get_ms_count();
 }
 
 static bool consume_pending_fan_actuate(uint8_t *out_speed, bool *out_power)
@@ -221,6 +227,9 @@ static void request_blind_toggle(void)
     device_state_mutex.lock();
     pending_blind_toggle = true;
     device_state_mutex.unlock();
+
+    // Record local change time to suppress remote override for 5 seconds
+    last_blind_local_change = Kernel::get_ms_count();
 }
 
 static void request_lighting_toggle(void)
@@ -228,6 +237,9 @@ static void request_lighting_toggle(void)
     device_state_mutex.lock();
     pending_lighting_toggle = true;
     device_state_mutex.unlock();
+
+    // Record local change time to suppress remote override for 5 seconds
+    last_lighting_local_change = Kernel::get_ms_count();
 }
 
 // Returns true (and clears the flag) if a toggle was requested since the last call.
@@ -931,9 +943,19 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
 static bool last_main_lighting = false;
 static bool main_lighting_known = false;
+static uint64_t last_lighting_local_change = 0;  // Timestamp of last local change
 
 static bool last_blind_open = false;
 static bool blind_known = false;
+static uint64_t last_blind_local_change = 0;
+
+static uint8_t last_fan_speed = 0;
+static bool last_fan_power = false;
+static uint64_t last_fan_local_change = 0;
+
+static bool last_door_locked = true;
+static bool door_locked_known = false;
+static uint64_t last_door_local_change = 0;
 
 // Actuation lives in exactly one place per device, called both by the
 // periodic poll below (for dashboard-initiated changes) and by the keypad
@@ -1024,15 +1046,26 @@ static bool poll_device_state_via_relay(void)
         bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
                            || strstr(g_rx, "\"main_lighting\": true") != NULL;
 
+        // Ignore remote value if local change happened recently (5s grace period)
+        uint64_t now = Kernel::get_ms_count();
         if (!main_lighting_known || main_lighting != last_main_lighting) {
-            apply_main_lighting(main_lighting);
+            if (now - last_lighting_local_change > 5000) {
+                apply_main_lighting(main_lighting);
+            } else {
+                printf("[DS] Ignoring remote main_lighting (local change < 5s ago)\\n");
+            }
         }
 
         bool blind = strstr(g_rx, "\"blind\":true") != NULL
                   || strstr(g_rx, "\"blind\": true") != NULL;
 
         if (!blind_known || blind != last_blind_open) {
-            request_blind_actuate(blind);
+            uint64_t now = Kernel::get_ms_count();
+            if (now - last_blind_local_change > 5000) {
+                request_blind_actuate(blind);
+            } else {
+                printf("[DS] Ignoring remote blind (local change < 5s ago)\\n");
+            }
         }
 
         // Fan state
@@ -1046,7 +1079,12 @@ static bool poll_device_state_via_relay(void)
         }
 
         if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
-            request_fan_actuate(fan_speed_state, fan_power_state);
+            uint64_t now = Kernel::get_ms_count();
+            if (now - last_fan_local_change > 5000) {
+                request_fan_actuate(fan_speed_state, fan_power_state);
+            } else {
+                printf("[DS] Ignoring remote fan (local change < 5s ago)\\n");
+            }
         }
 
         // Door lock state
@@ -1054,7 +1092,12 @@ static bool poll_device_state_via_relay(void)
                               || strstr(g_rx, "\"smart_lock\": true") != NULL;
 
         if (door_locked_state != get_door_locked()) {
-            request_door_actuate(door_locked_state);
+            uint64_t now = Kernel::get_ms_count();
+            if (now - last_door_local_change > 5000) {
+                request_door_actuate(door_locked_state);
+            } else {
+                printf("[DS] Ignoring remote door (local change < 5s ago)\\n");
+            }
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
