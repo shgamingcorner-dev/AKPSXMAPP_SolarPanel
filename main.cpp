@@ -52,11 +52,16 @@ char Message2 [ ] = "3.Lighting 4.Fans ";
 char Message3 [ ] = "Invalid try again";
 
 // Timestamp variables for grace period (must be before functions that use them)
-// Use atomic for thread-safe access between main thread (writes) and network thread (reads)
-static std::atomic<uint64_t> last_lighting_local_change{0};
-static std::atomic<uint64_t> last_blind_local_change{0};
-static std::atomic<uint64_t> last_fan_local_change{0};
-static std::atomic<uint64_t> last_door_local_change{0};
+// Protected by their own mutexes for thread-safe access between main thread (writes) and network thread (reads)
+static uint64_t last_lighting_local_change = 0;
+static uint64_t last_blind_local_change = 0;
+static uint64_t last_fan_local_change = 0;
+static uint64_t last_door_local_change = 0;
+
+static Mutex lighting_timestamp_mutex;
+static Mutex blind_timestamp_mutex;
+static Mutex fan_timestamp_mutex;
+static Mutex door_timestamp_mutex;
 
 DHT11 dht11(DHT11_PIN);
 
@@ -128,8 +133,10 @@ static void request_fan_actuate(uint8_t speed, bool power)
     pending_fan_power = power;
     fan_actuate_mutex.unlock();
 
-    // Record local change time to suppress remote override for 5 seconds
+    // Record local change time to suppress remote override for 15 seconds
+    fan_timestamp_mutex.lock();
     last_fan_local_change = Kernel::get_ms_count();
+    fan_timestamp_mutex.unlock();
 }
 
 static void request_door_actuate(bool locked)
