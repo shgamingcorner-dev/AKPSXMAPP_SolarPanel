@@ -98,5 +98,12 @@
 #define MESSAGE_4  "4.Fan 5.Spd 6.Lock"
 #define MESSAGE_5  "Fan: Off"
 #define MESSAGE_6  "Lock: Locked"
+#define MESSAGE_LOCKED  "Access Locked"
+#define MESSAGE_LOCKED2 "Scan RFID Tag"
+#define FANSPEED_M  "1:Low 2:Med"
+#define FANSPEED_M2  "3:High 4:Off"
+#define FANSPEED_INVALID "Invalid Speed"
+#define FANSPEED_SET "Speed Set"
+#define FANSPEED_OFF "Fan: OFF"
 
 #endif // CONFIG_H
