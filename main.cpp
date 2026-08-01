@@ -1274,7 +1274,7 @@ static void network_task(void)
 
 
 
-static Thread networkThread(osPriorityNormal, 2048);
+static Thread networkThread(osPriorityNormal, 4096);
 
 
 int main(void) //RMAIN
