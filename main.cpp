@@ -47,13 +47,13 @@ static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 // LCD
 unsigned char key2, outChar, outChar2, outChar3;
 unsigned char passWord[] = {'0', '0', '0', '0'};
-char MessageLocked [ ] = "Door Locked";
-char MessageLocked2 [ ] = "Tagg RFID";
-char Message1 [ ] = "1.Blind 2.Window";
-char Message2 [ ] = "3.Lighting 4.Fans ";
-char Message3 [ ] = "Invalid try again";
-char FanspeedM [ ] = "1:Low 2:Med";
-char FanspeedM2 [ ] = "3:High 4:Off";
+char MessageLocked [ ] = "Door Locked            ";
+char MessageLocked2 [ ] = "Tagg RFID             ";
+char Message1 [ ] = "1.Blind 2.Window            ";
+char Message2 [ ] = "3.Lighting 4.Fans           ";
+char Message3 [ ] = "Invalid try again           ";
+char FanspeedM [ ] = "1:Low 2:Med                ";
+char FanspeedM2 [ ] = "3:High 4:Off              ";
 
 static uint64_t last_lighting_local_change = 0;
 static uint64_t last_blind_local_change = 0;
