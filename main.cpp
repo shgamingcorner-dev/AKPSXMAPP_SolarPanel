@@ -52,10 +52,11 @@ char Message2 [ ] = "3.Lighting 4.Fans ";
 char Message3 [ ] = "Invalid try again";
 
 // Timestamp variables for grace period (must be before functions that use them)
-static uint64_t last_lighting_local_change = 0;
-static uint64_t last_blind_local_change = 0;
-static uint64_t last_fan_local_change = 0;
-static uint64_t last_door_local_change = 0;
+// Use atomic for thread-safe access between main thread (writes) and network thread (reads)
+static std::atomic<uint64_t> last_lighting_local_change{0};
+static std::atomic<uint64_t> last_blind_local_change{0};
+static std::atomic<uint64_t> last_fan_local_change{0};
+static std::atomic<uint64_t> last_door_local_change{0};
 
 DHT11 dht11(DHT11_PIN);
 
@@ -692,7 +693,7 @@ static bool send_to_thingspeak(void)
     // 4. Send
     printf("[TS] Sending: %s\n", query);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
         at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR"); // Reduced from 2000
         return false;
     }
@@ -743,7 +744,7 @@ static bool send_telegram_via_relay(const char *message)
 
     printf("[TG] Sending: %s\n", query);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
         at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR"); // Reduced from 2000
         return false;
     }
@@ -818,7 +819,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
 
     printf("[SB] Sending telemetry: %s\n", body);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
         at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR"); // Reduced from 2000
         return false;
     }
@@ -870,7 +871,7 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
 
     printf("[SB] Sending alert: %s\n", body);
     esp_send(query);
-    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 5000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
+    if (esp_read(3000, "CLOSED") <= 0) { // Reduced from 15000 -- ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
         at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR"); // Reduced from 2000
         return false;
     }
@@ -1051,7 +1052,7 @@ static bool poll_device_state_via_relay(void)
         // Ignore remote value if local change happened recently (5s grace period)
         uint64_t now = Kernel::get_ms_count();
         if (!main_lighting_known || main_lighting != last_main_lighting) {
-            if (now - last_lighting_local_change > 5000) {
+            if (now - last_lighting_local_change > 15000) {
                 apply_main_lighting(main_lighting);
             } else {
                 printf("[DS] Ignoring remote main_lighting (local change < 5s ago)\\n");
@@ -1063,7 +1064,7 @@ static bool poll_device_state_via_relay(void)
 
         if (!blind_known || blind != last_blind_open) {
             uint64_t now = Kernel::get_ms_count();
-            if (now - last_blind_local_change > 5000) {
+            if (now - last_blind_local_change > 15000) {
                 request_blind_actuate(blind);
             } else {
                 printf("[DS] Ignoring remote blind (local change < 5s ago)\\n");
@@ -1082,7 +1083,7 @@ static bool poll_device_state_via_relay(void)
 
         if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
             uint64_t now = Kernel::get_ms_count();
-            if (now - last_fan_local_change > 5000) {
+            if (now - last_fan_local_change > 15000) {
                 request_fan_actuate(fan_speed_state, fan_power_state);
             } else {
                 printf("[DS] Ignoring remote fan (local change < 5s ago)\\n");
@@ -1095,7 +1096,7 @@ static bool poll_device_state_via_relay(void)
 
         if (door_locked_state != get_door_locked()) {
             uint64_t now = Kernel::get_ms_count();
-            if (now - last_door_local_change > 5000) {
+            if (now - last_door_local_change > 15000) {
                 request_door_actuate(door_locked_state);
             } else {
                 printf("[DS] Ignoring remote door (local change < 5s ago)\\n");
