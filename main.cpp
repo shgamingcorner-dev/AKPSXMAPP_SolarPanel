@@ -48,7 +48,7 @@ static DigitalOut led_mainLighting(MAIN_LIGHT_PIN);
 unsigned char key2, outChar, outChar2, outChar3;
 unsigned char passWord[] = {'0', '0', '0', '0'};
 char MessageLocked [ ] = "Door Locked";
-char MessageLocked2 [ ] = "Tag RFID";
+char MessageLocked2 [ ] = "Tagg RFID";
 char Message1 [ ] = "1.Blind 2.Window";
 char Message2 [ ] = "3.Lighting 4.Fans ";
 char Message3 [ ] = "Invalid try again";
@@ -1116,12 +1116,11 @@ static bool poll_device_state_via_relay(void)
 
             if (!main_lighting_known || main_lighting != last_main_lighting) {
                 if (!lighting_recent) {
-                    // Prefer confirmed value over stale Supabase
-                    bool apply_value = use_confirmed_lighting ? confirmed : main_lighting;
-                    apply_main_lighting(apply_value);
-                } else {
-                    printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\\n");
-                }
+                                    // After grace period: apply remote value (Supabase is source of truth)
+                                    apply_main_lighting(main_lighting);
+                                } else {
+                                    printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\n");
+                                }
             }
 
             bool blind = strstr(g_rx, "\"blind\":true") != NULL
@@ -1141,11 +1140,11 @@ static bool poll_device_state_via_relay(void)
                             confirmed_blind_mutex.unlock();
 
                 if (!blind_recent) {
-                    bool apply_value = use_confirmed_blind ? confirmed : blind;
-                    request_blind_actuate(apply_value);
-                } else {
-                    printf("[DS] Ignoring remote blind (local change < 15s ago)\\n");
-                }
+                                    // After grace period: apply remote value (Supabase is source of truth)
+                                    request_blind_actuate(blind);
+                                } else {
+                                    printf("[DS] Ignoring remote blind (local change < 15s ago)\n");
+                                }
             }
 
             // Fan state
@@ -1173,12 +1172,11 @@ static bool poll_device_state_via_relay(void)
                             confirmed_fan_mutex.unlock();
 
                 if (!fan_recent) {
-                    bool apply_power = (confirmed_fan_power != fan_power_state) ? confirmed_fan_power_val : fan_power_state;
-                    uint8_t apply_speed = (confirmed_fan_speed != fan_speed_state) ? confirmed_fan_speed_val : fan_speed_state;
-                    request_fan_actuate(apply_speed, apply_power);
-                } else {
-                    printf("[DS] Ignoring remote fan (local change < 15s ago)\\n");
-                }
+                                    // After grace period: apply remote value (Supabase is source of truth)
+                                    request_fan_actuate(fan_speed_state, fan_power_state);
+                                } else {
+                                    printf("[DS] Ignoring remote fan (local change < 15s ago)\n");
+                                }
             }
 
             // Door lock state
@@ -1199,11 +1197,11 @@ static bool poll_device_state_via_relay(void)
                             confirmed_door_mutex.unlock();
 
                 if (!door_recent) {
-                    bool apply_value = use_confirmed_door ? confirmed : door_locked_state;
-                    request_door_actuate(apply_value);
-                } else {
-                    printf("[DS] Ignoring remote door (local change < 15s ago)\\n");
-                }
+                                    // After grace period: apply remote value (Supabase is source of truth)
+                                    request_door_actuate(door_locked_state);
+                                } else {
+                                    printf("[DS] Ignoring remote door (local change < 15s ago)\n");
+                                }
             }
         } else {
             printf("[DS] Unexpected response — check relay logs\\n");
@@ -1447,20 +1445,8 @@ int main(void) //RMAIN
 
     //LCD PRINT BASIC MESSAGES
 
-    lcd_write_cmd(0x80);			// Move cursor to line 1 position 1
-    for (int i = 0; i < (int)strlen(Message1); i++)		//for i amt of char LCD module
-    {
-        outChar = Message1[i];
-        lcd_write_data(outChar); 	// write character data to LCD
-    }
-
-    lcd_write_cmd(0xC0);			// Move cursor to line 2 position 1
-
-    for (int i = 0; i < (int)strlen(Message2); i++)		//for i amt char LCD module
-    {
-        outChar2 = Message2[i];
-        lcd_write_data(outChar2); 	// write character data to LCD
-    }
+    lcdmessage(Message1, 1); //Message 1
+    lcdmessage(Message2, 2); //Message 2 on second line
 
     // Allocate large buffers on heap to avoid stack overflow
     g_tx = new (std::nothrow) char[BUF];
@@ -1482,6 +1468,12 @@ int main(void) //RMAIN
         // ---- Keypad: '1' toggles Blind, '3' toggles Lighting -----
         if (key_pending) {
             key_pending = false;
+
+            if (rfid == 0){
+                lcdmessage(MessageLocked, 1); // locked Message 1
+                lcdmessage(MessageLocked2, 2); //locked Message 2 on second line
+            }
+            else{
             lcdmessage(Message1, 1); //Message 1
             lcdmessage(Message2, 2); //Message 2 on second line
 
@@ -1511,30 +1503,13 @@ int main(void) //RMAIN
                         request_fan_actuate(fan_speed, new_fan_power);
                     }
                     break;
-                case '5':
-                    printf("5 is pressed -- Fan speed up\n");
-                    // Increase fan speed by 25%
-                    {
-                        fan_mutex.lock();
-                        uint8_t new_speed = fan_speed + 25;
-                        if (new_speed > 100) new_speed = 100;
-                        fan_mutex.unlock();
-                        request_fan_actuate(new_speed, fan_power);
-                    }
-                    break;
-                case '6':
-                    printf("6 is pressed -- toggling Door Lock\n");
-                    // Toggle door lock
-                    request_door_actuate(!get_door_locked());
-                    break;
+                
                 default:
-                    for (int i = 0; i < (int)strlen(Message3); i++)		//for 20 char LCD module
-                    {
-                        outChar3 = Message3[i];
-                        lcd_write_data(outChar3); 	// write character data to LCD
-                    }
+                    lcdmessage(MessageLocked, 1); // Invalid Message 1
+                    lcdmessage(MessageLocked, 2); // Invalid Message 2
                     break;
             }
+         }
         }
 
         // ---- Consume pending blind actuation request from network thread ----
