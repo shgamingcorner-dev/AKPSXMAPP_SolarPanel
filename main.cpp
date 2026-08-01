@@ -1281,6 +1281,8 @@ static void network_task(void)
         //  Telegram alert on RFID scan, rate-limited by TG_COOLDOWN_MS
         int rfid_now = get_latest_rfid();
         if (rfid_now != 0 && now - last_tg_send >= TG_COOLDOWN_MS) {
+            // Consume RFID value so we only send once per scan
+            set_latest_rfid(0);
             last_tg_send = now;                                                             //TELEGRAM MESSAGE YO
             const char *msg = (rfid_now == 1) ? "RFID card scanned!" : "RFID tag scanned!"; //CHANGE THE THINGS HERE TO CHANGE WHAT IS BEING SAID IN TELEGRAM
             if (send_telegram_via_relay(msg)) {
