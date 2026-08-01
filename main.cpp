@@ -51,6 +51,12 @@ char Message1 [ ] = "1.Blind 2.Window";
 char Message2 [ ] = "3.Lighting 4.Fans ";
 char Message3 [ ] = "Invalid try again";
 
+// Timestamp variables for grace period (must be before functions that use them)
+static uint64_t last_lighting_local_change = 0;
+static uint64_t last_blind_local_change = 0;
+static uint64_t last_fan_local_change = 0;
+static uint64_t last_door_local_change = 0;
+
 DHT11 dht11(DHT11_PIN);
 
 
@@ -943,19 +949,15 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
 static bool last_main_lighting = false;
 static bool main_lighting_known = false;
-static uint64_t last_lighting_local_change = 0;  // Timestamp of last local change
 
 static bool last_blind_open = false;
 static bool blind_known = false;
-static uint64_t last_blind_local_change = 0;
 
 static uint8_t last_fan_speed = 0;
 static bool last_fan_power = false;
-static uint64_t last_fan_local_change = 0;
 
 static bool last_door_locked = true;
 static bool door_locked_known = false;
-static uint64_t last_door_local_change = 0;
 
 // Actuation lives in exactly one place per device, called both by the
 // periodic poll below (for dashboard-initiated changes) and by the keypad
