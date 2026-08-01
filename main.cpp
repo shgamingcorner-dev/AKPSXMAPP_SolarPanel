@@ -58,10 +58,22 @@ static uint64_t last_blind_local_change = 0;
 static uint64_t last_fan_local_change = 0;
 static uint64_t last_door_local_change = 0;
 
+// Confirmed values from successful pushes (preferred over stale Supabase data)
+static bool confirmed_lighting = false;
+static bool confirmed_blind = false;
+static uint8_t confirmed_fan_speed = 0;
+static bool confirmed_fan_power = false;
+static bool confirmed_door_locked = true;
+
 static Mutex lighting_timestamp_mutex;
 static Mutex blind_timestamp_mutex;
 static Mutex fan_timestamp_mutex;
 static Mutex door_timestamp_mutex;
+
+static Mutex confirmed_lighting_mutex;
+static Mutex confirmed_blind_mutex;
+static Mutex confirmed_fan_mutex;
+static Mutex confirmed_door_mutex;
 
 DHT11 dht11(DHT11_PIN);
 
@@ -948,6 +960,31 @@ static bool send_device_state_via_relay(const char *field, bool value)
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[DS] Push OK\n" : "[DS] Unexpected response — check relay logs\n");
 
+    // Update confirmed values on successful push
+    if (ok) {
+        if (strcmp(field, "main_lighting") == 0) {
+            confirmed_lighting_mutex.lock();
+            confirmed_lighting = value;
+            confirmed_lighting_mutex.unlock();
+        } else if (strcmp(field, "blind") == 0) {
+            confirmed_blind_mutex.lock();
+            confirmed_blind = value;
+            confirmed_blind_mutex.unlock();
+        } else if (strcmp(field, "fan_power") == 0) {
+            confirmed_fan_mutex.lock();
+            confirmed_fan_power = value;
+            confirmed_fan_mutex.unlock();
+        } else if (strcmp(field, "fan_speed") == 0) {
+            confirmed_fan_mutex.lock();
+            confirmed_fan_speed = (uint8_t)atoi(field);  // field is actually value here
+            confirmed_fan_mutex.unlock();
+        } else if (strcmp(field, "door_locked") == 0) {
+            confirmed_door_mutex.lock();
+            confirmed_door_locked = value;
+            confirmed_door_mutex.unlock();
+        }
+    }
+
     at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
     return ok;
 }
@@ -1055,10 +1092,8 @@ static bool poll_device_state_via_relay(void)
     if (esp_read(3000, "CLOSED") <= 0) { // ",CLOSED" only appears once the server (Connection: close) has fully sent its response and shut the socket
         at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
         return false;
-    }
-
     bool ok = strstr(g_rx, "200 OK") != NULL;
-    if (ok) {
+        if (ok) {
             bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
                                || strstr(g_rx, "\"main_lighting\": true") != NULL;
 
@@ -1068,72 +1103,103 @@ static bool poll_device_state_via_relay(void)
             bool lighting_recent = (now - last_lighting_local_change <= 15000);
             lighting_timestamp_mutex.unlock();
 
+            // Use confirmed value from successful push if available
+            confirmed_lighting_mutex.lock();
+            bool use_confirmed_lighting = confirmed_lighting != main_lighting;
+            bool confirmed = confirmed_lighting;
+            confirmed_lighting_mutex.unlock();
+
             if (!main_lighting_known || main_lighting != last_main_lighting) {
                 if (!lighting_recent) {
-                    apply_main_lighting(main_lighting);
+                    // Prefer confirmed value over stale Supabase
+                    bool apply_value = use_confirmed_lighting ? confirmed : main_lighting;
+                    apply_main_lighting(apply_value);
                 } else {
                     printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\\n");
                 }
             }
 
-        bool blind = strstr(g_rx, "\"blind\":true") != NULL
-                          || strstr(g_rx, "\"blind\": true") != NULL;
+            bool blind = strstr(g_rx, "\"blind\":true") != NULL
+                              || strstr(g_rx, "\"blind\": true") != NULL;
 
-                if (!blind_known || blind != last_blind_open) {
-                    uint64_t now = Kernel::get_ms_count();
-                    blind_timestamp_mutex.lock();
-                    bool blind_recent = (now - last_blind_local_change <= 15000);
-                    blind_timestamp_mutex.unlock();
+            if (!blind_known || blind != last_blind_open) {
+                uint64_t now = Kernel::get_ms_count();
+                blind_timestamp_mutex.lock();
+                bool blind_recent = (now - last_blind_local_change <= 15000);
+                blind_timestamp_mutex.unlock();
 
-                    if (!blind_recent) {
-                        request_blind_actuate(blind);
-                    } else {
-                        printf("[DS] Ignoring remote blind (local change < 15s ago)\\n");
-                    }
+                // Use confirmed value from successful push if available
+                confirmed_blind_mutex.lock();
+                bool use_confirmed_blind = confirmed_blind != blind;
+                bool confirmed = confirmed_blind;
+                confirmed_blind_mutex.unlock();
+
+                if (!blind_recent) {
+                    bool apply_value = use_confirmed_blind ? confirmed : blind;
+                    request_blind_actuate(apply_value);
+                } else {
+                    printf("[DS] Ignoring remote blind (local change < 15s ago)\\n");
                 }
+            }
 
-                // Fan state
-                bool fan_power_state = strstr(g_rx, "\"fan_power\":true") != NULL
-                                    || strstr(g_rx, "\"fan_power\": true") != NULL;
-                uint8_t fan_speed_state = 0;
-                char *fan_speed_ptr = strstr(g_rx, "\"fan_speed\":");
-                if (fan_speed_ptr) {
-                    char *num_start = fan_speed_ptr + strlen("\"fan_speed\":");
-                    fan_speed_state = (uint8_t)atoi(num_start);
+            // Fan state
+            bool fan_power_state = strstr(g_rx, "\"fan_power\":true") != NULL
+                                || strstr(g_rx, "\"fan_power\": true") != NULL;
+            uint8_t fan_speed_state = 0;
+            char *fan_speed_ptr = strstr(g_rx, "\"fan_speed\":");
+            if (fan_speed_ptr) {
+                char *num_start = fan_speed_ptr + strlen("\"fan_speed\":");
+                fan_speed_state = (uint8_t)atoi(num_start);
+            }
+
+            if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
+                uint64_t now = Kernel::get_ms_count();
+                fan_timestamp_mutex.lock();
+                bool fan_recent = (now - last_fan_local_change <= 15000);
+                fan_timestamp_mutex.unlock();
+
+                // Use confirmed value from successful push if available
+                confirmed_fan_mutex.lock();
+                bool use_confirmed_fan_power = confirmed_fan_power != fan_power_state;
+                bool confirmed_fan_power_val = confirmed_fan_power;
+                uint8_t confirmed_fan_speed_val = confirmed_fan_speed;
+                confirmed_fan_mutex.unlock();
+
+                if (!fan_recent) {
+                    bool apply_power = (confirmed_fan_power != fan_power_state) ? confirmed_fan_power_val : fan_power_state;
+                    uint8_t apply_speed = (confirmed_fan_speed != fan_speed_state) ? confirmed_fan_speed_val : fan_speed_state;
+                    request_fan_actuate(apply_speed, apply_power);
+                } else {
+                    printf("[DS] Ignoring remote fan (local change < 15s ago)\\n");
                 }
+            }
 
-                if (fan_power_state != get_fan_power() || fan_speed_state != get_fan_speed()) {
-                    uint64_t now = Kernel::get_ms_count();
-                    fan_timestamp_mutex.lock();
-                    bool fan_recent = (now - last_fan_local_change <= 15000);
-                    fan_timestamp_mutex.unlock();
+            // Door lock state
+            bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
+                                  || strstr(g_rx, "\"smart_lock\": true") != NULL;
 
-                    if (!fan_recent) {
-                        request_fan_actuate(fan_speed_state, fan_power_state);
-                    } else {
-                        printf("[DS] Ignoring remote fan (local change < 15s ago)\\n");
-                    }
+            if (door_locked_state != get_door_locked()) {
+                uint64_t now = Kernel::get_ms_count();
+                door_timestamp_mutex.lock();
+                bool door_recent = (now - last_door_local_change <= 15000);
+                door_timestamp_mutex.unlock();
+
+                // Use confirmed value from successful push if available
+                confirmed_door_mutex.lock();
+                bool use_confirmed_door = confirmed_door_locked != door_locked_state;
+                bool confirmed = confirmed_door_locked;
+                confirmed_door_mutex.unlock();
+
+                if (!door_recent) {
+                    bool apply_value = use_confirmed_door ? confirmed : door_locked_state;
+                    request_door_actuate(apply_value);
+                } else {
+                    printf("[DS] Ignoring remote door (local change < 15s ago)\\n");
                 }
-
-                // Door lock state
-                bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
-                                      || strstr(g_rx, "\"smart_lock\": true") != NULL;
-
-                if (door_locked_state != get_door_locked()) {
-                    uint64_t now = Kernel::get_ms_count();
-                    door_timestamp_mutex.lock();
-                    bool door_recent = (now - last_door_local_change <= 15000);
-                    door_timestamp_mutex.unlock();
-
-                    if (!door_recent) {
-                        request_door_actuate(door_locked_state);
-                    } else {
-                        printf("[DS] Ignoring remote door (local change < 15s ago)\\n");
-                    }
-                }
-    } else {
-        printf("[DS] Unexpected response — check relay logs\n");
-    }
+            }
+        } else {
+            printf("[DS] Unexpected response — check relay logs\\n");
+        }
 
     at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
     return ok;
