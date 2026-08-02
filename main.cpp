@@ -314,13 +314,37 @@ static volatile bool pending_fan_actuate = false;
 static volatile uint8_t pending_fan_speed = 0;
 static volatile bool pending_fan_power = false;
 
-// Door lock: keypad '2' is the ONLY local source. request_door_actuate() is
-// called ONLY from the keypad (never from the poll), so a pending flag means
-// "keypad wants a relay push". last_door_local_change feeds the poll's grace
-// check so a keypad push isn't overwritten by a stale remote read.
+// Door lock: mirrors the blind system. Two separate flags avoid a
+// double-consume race:
+//   toggle  (keypad '2' -> network task): request_door_toggle/consume_pending_door_toggle
+//   actuate (network/poll -> main loop):  request_door_actuate/consume_pending_door_actuate
+// request_door_toggle stamps last_door_local_change (local source); the poll's
+// 15s grace reads it so a keypad push isn't overwritten by a stale remote read.
 static Mutex   door_actuate_mutex;
 static volatile bool pending_door_actuate = false;
 static volatile bool pending_door_locked = false;
+static Mutex   door_toggle_mutex;
+static volatile bool pending_door_toggle = false;
+
+static void request_door_toggle(void)
+{
+    door_toggle_mutex.lock();
+    pending_door_toggle = true;
+    door_toggle_mutex.unlock();
+
+    door_timestamp_mutex.lock();
+    last_door_local_change = now_ms();
+    door_timestamp_mutex.unlock();
+}
+
+static bool consume_pending_door_toggle(void)
+{
+    door_toggle_mutex.lock();
+    bool v = pending_door_toggle;
+    pending_door_toggle = false;
+    door_toggle_mutex.unlock();
+    return v;
+}
 
 static void request_door_actuate(bool locked)
 {
@@ -328,12 +352,6 @@ static void request_door_actuate(bool locked)
     pending_door_actuate = true;
     pending_door_locked = locked;
     door_actuate_mutex.unlock();
-
-    // Stamped ONLY on keypad-initiated changes. The poll reads this to skip
-    // applying a stale remote read while the keypad push is still in flight.
-    door_timestamp_mutex.lock();
-    last_door_local_change = now_ms();
-    door_timestamp_mutex.unlock();
 }
 
 static bool consume_pending_door_actuate(bool *out_locked)
@@ -1185,6 +1203,8 @@ static void apply_door_lock(bool locked)
     doorLock.pulsewidth_us(pulse);
     thread_sleep_for(500);  // Wait for movement
 
+    last_door_locked = locked;
+    door_locked_known = true;
     printf("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
 }
 
@@ -1306,7 +1326,7 @@ static bool poll_device_state_via_relay(void)
                door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
                get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
 
-        if (door_locked_state != get_door_locked()) {
+        if (door_locked_state != get_door_locked() || !door_locked_known) {
             // Grace: if the keypad just toggled the door (and its push may
             // still be in flight over the 3-8s AT link), don't apply a stale
             // remote read on top of it.
@@ -1317,7 +1337,7 @@ static bool poll_device_state_via_relay(void)
             if (!door_recent) {
                 printf("[DS] Applying door state from relay: %s\n",
                        door_locked_state ? "LOCKED" : "UNLOCKED");
-                apply_door_lock(door_locked_state);
+                request_door_actuate(door_locked_state);
             } else {
                 printf("[DS] Door poll: local change < 15s ago - not applying remote\n");
             }
@@ -1433,17 +1453,20 @@ static void network_task(void)
             }
         }
 
-        // Door lock: keypad '2' is the ONLY local source of door pushes.
-        // consume_pending_door_actuate fires ONLY when the keypad pressed '2'
-        // (the poll never calls request_door_actuate -- it applies directly
-        // and never pushes). Push smart_lock: the relay aliases it to BOTH
-        // door_locked and smart_lock, keeping the columns in sync.
-        bool door_locked_req;
-        if (consume_pending_door_actuate(&door_locked_req)) {
-            printf("[NET] Door push triggered - pushing smart_lock=%s to relay\n",
-                   door_locked_req ? "true" : "false");
-            if (!send_device_state_via_relay("smart_lock", door_locked_req)) {
-                printf("[WARN] Door lock push failed\n");
+        // Door lock: mirrors the blind system. The keypad '2' sets the toggle
+        // flag (request_door_toggle); we consume it here, compute the new
+        // state from last_door_locked, push it to the relay, and queue the
+        // actuation for the MAIN loop (which owns apply_door_lock + servo).
+        // Push smart_lock: the relay aliases it to BOTH door_locked and
+        // smart_lock, keeping the columns in sync.
+        if (consume_pending_door_toggle()) {
+            bool new_door_locked = !last_door_locked;
+            printf("[NET] Door toggle: %s -> %s\n",
+                   last_door_locked ? "LOCKED" : "UNLOCKED",
+                   new_door_locked ? "LOCKED" : "UNLOCKED");
+            request_door_actuate(new_door_locked);
+            if (!send_device_state_via_relay("smart_lock", new_door_locked)) {
+                printf("[WARN] Door state push failed\n");
                 consecutive_failures++;
             } else {
                 printf("[NET] Door push successful\n");
@@ -1638,37 +1661,15 @@ int main(void)
                             lcdmessage(Message1, 1);
                             lcdmessage(Message2, 2);
                             break;
-                        case '2': {
+                        case '2':
                             printf("2 is pressed -- toggling Door Lock\n");
-
-                            // Debounce: ignore presses within 500ms of the last
-                            // door action (servo takes ~500ms to settle anyway)
-                            door_timestamp_mutex.lock();
-                            bool door_recent_press = (now_ms() - last_door_local_change <= 500);
-                            door_timestamp_mutex.unlock();
-                            if (door_recent_press) {
-                                printf("[DOOR] Debounce - ignoring rapid press\n");
-                                lcdmessage("Door: Busy", 1);
-                                lcdmessage("", 2);
-                                thread_sleep_for(500);
-                                lcdmessage(Message1, 1);
-                                lcdmessage(Message2, 2);
-                                break;
-                            }
-
-                            // Toggle local state + move servo, then request the
-                            // network thread to push the new state to the relay.
-                            bool new_door = !get_door_locked();
-                            apply_door_lock(new_door);
-                            request_door_actuate(new_door);
-
-                            lcdmessage(new_door ? "Door: LOCKED" : "Door: UNLOCKED", 1);
+                            request_door_toggle();
+                            lcdmessage("Door Toggled", 1);
                             lcdmessage("", 2);
                             thread_sleep_for(500);
                             lcdmessage(Message1, 1);
                             lcdmessage(Message2, 2);
                             break;
-                        }
                         case '3':
                             printf("3 is pressed -- toggling Lighting\n");
                             request_lighting_toggle();
@@ -1708,6 +1709,12 @@ int main(void)
         bool blind_open_requested;
         if (consume_pending_blind_actuate(&blind_open_requested)) {
             apply_blind(blind_open_requested);
+        }
+
+        // ---- Consume pending door actuation request from network thread ----
+        bool door_locked_req;
+        if (consume_pending_door_actuate(&door_locked_req)) {
+            apply_door_lock(door_locked_req);
         }
 
         // ---- Consume pending fan actuation request from network thread ----
