@@ -28,9 +28,9 @@ static char *g_tx = nullptr;
 static char *g_rx = nullptr;
 static char tagID[21];
 
-// Hardware: Fan servo (360° continuous rotation) + Door lock
+// Hardware: Fan servo (360° continuous rotation) + Door lock (SG90)
 static PwmOut fanServo(FAN_SERVO_PIN);
-static DigitalOut doorLock(DOOR_LOCK_PIN);
+static PwmOut doorLock(DOOR_LOCK_PIN);  // SG90 servo for door lock
 
 MFRC522             mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
@@ -47,6 +47,7 @@ static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 // LCD
 unsigned char key2, outChar, outChar2, outChar3;
 unsigned char passWord[] = {'0', '0', '0', '0'};
+<<<<<<< HEAD
 char MessageLocked [ ] = "Door Locked              ";
 char MessageLocked2 [ ] = "Tagg RFI                ";
 char Message1 [ ] = "1.Blind 2.Window              ";
@@ -54,6 +55,15 @@ char Message2 [ ] = "3.Lighting 4.Fans             ";
 char Message3 [ ] = "Invalid try again             ";
 char FanspeedM [ ] = "1:Low 2:Med                  ";
 char FanspeedM2 [ ] = "3:High 4:Off                ";
+=======
+char MessageLocked [ ] = "Door Locked";
+char MessageLocked2 [ ] = "Tagg RFID";
+char Message1 [ ] = "1.Blind 2.Window";
+char Message2 [ ] = "3.Lighting 4.Fans";
+char Message3 [ ] = "Invalid try again";
+char FanspeedM [ ] = "1:Low 2:Med";
+char FanspeedM2 [ ] = "3:High 4:Off";
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
 
 static uint64_t last_lighting_local_change = 0;
 static uint64_t last_blind_local_change = 0;
@@ -378,8 +388,11 @@ static void set_fan_speed(uint8_t speed)
     fan_mutex.unlock();
 
     if (fan_power) {
+<<<<<<< HEAD
         // Convert speed (0-100) to duty cycle (0.05 to 0.10 for most servos)
         // 0.075 = neutral (stop), 0.05 = full reverse, 0.10 = full forward
+=======
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
         float duty = 0.075f + (speed - 50) * 0.0005f;
         fanServo.write(duty);
     }
@@ -394,8 +407,12 @@ static void set_fan_power(bool on)
     if (on) {
         set_fan_speed(fan_speed);
     } else {
+<<<<<<< HEAD
         // OFF = neutral position (stop)
         fanServo.write(0.075f);  // 7.5% duty cycle = neutral for most servos
+=======
+        fanServo.write(0.075f);
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
     }
 }
 
@@ -405,7 +422,14 @@ static void set_door_lock(bool locked)
     door_locked = locked;
     door_mutex.unlock();
 
-    doorLock = locked ? DOOR_LOCK_LOCKED : DOOR_LOCK_UNLOCKED;
+    // SG90 servo control with pulse widths
+    if (locked) {
+        doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // 1500us - middle position
+        printf("[DOOR] Locked (pulse: %dus)\n", PULSE_WIDTH_0_DEGREE);
+    } else {
+        doorLock.pulsewidth_us(PULSE_WIDTH_90_DEGREE);  // 2400us - full open
+        printf("[DOOR] Unlocked (pulse: %dus)\n", PULSE_WIDTH_90_DEGREE);
+    }
 }
 
 static uint8_t get_fan_speed(void)
@@ -1116,6 +1140,7 @@ static void apply_fan(uint8_t speed, bool on)
     fan_power = final_power;
     fan_mutex.unlock();
 
+<<<<<<< HEAD
     // CONTROL THE SERVO USING PWM write() INSTEAD OF pulsewidth_us()
     if (final_power && final_speed > 0) {
         // Convert speed (0-100) to duty cycle
@@ -1123,13 +1148,21 @@ static void apply_fan(uint8_t speed, bool on)
         // Map speed 0-100 to duty cycle 0.05-0.10
         float duty = 0.050f + (final_speed * 0.0005f);
         // Clamp to safe range
+=======
+    if (final_power && final_speed > 0) {
+        float duty = 0.050f + (final_speed * 0.0005f);
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
         if (duty < 0.05f) duty = 0.05f;
         if (duty > 0.10f) duty = 0.10f;
         fanServo.write(duty);
         printf("Fan ON - speed:%u%%, duty:%.3f\n", final_speed, duty);
     } else {
+<<<<<<< HEAD
         // OFF - send neutral (stop)
         fanServo.write(0.075f);  // 7.5% duty cycle = neutral/stop for most servos
+=======
+        fanServo.write(0.075f);
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
         printf("Fan OFF - neutral duty:0.075\n");
     }
     
@@ -1145,8 +1178,13 @@ static void apply_door_lock(bool locked)
     door_locked = locked;
     door_mutex.unlock();
 
-    doorLock = locked ? DOOR_LOCK_LOCKED : DOOR_LOCK_UNLOCKED;
-    printf("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
+    if (locked) {
+        doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // 1500us - locked position
+        printf("[DS] door -> LOCKED (pulse: %dus)\n", PULSE_WIDTH_0_DEGREE);
+    } else {
+        doorLock.pulsewidth_us(PULSE_WIDTH_90_DEGREE);  // 2400us - unlocked position
+        printf("[DS] door -> UNLOCKED (pulse: %dus)\n", PULSE_WIDTH_90_DEGREE);
+    }
 }
 
 static bool poll_device_state_via_relay(void)
@@ -1450,19 +1488,31 @@ int main(void)
     motor_init();
 
     // Initialize fan servo with PWM write
+<<<<<<< HEAD
     fanServo.period_ms(20);  // 50Hz standard for servos
     fanServo.write(0.075f);  // Start at neutral/stop
     
     printf("\n=== FAN SERVO INITIALIZED ===\n");
     printf("Neutral duty: 0.075 (7.5%%)\n");
     printf("Forward range: 0.050 to 0.100 (5%% to 10%%)\n\n");
+=======
+    fanServo.period_ms(20);
+    fanServo.write(0.075f);
+    
+    // Initialize door lock servo (SG90)
+    doorLock.period_ms(PERIOD_WIDTH);
+    doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // Start locked (1500us)
+    
+    printf("\n=== SERVOS INITIALIZED ===\n");
+    printf("Fan neutral duty: 0.075 (7.5%%)\n");
+    printf("Door lock locked pulse: %dus (0°)\n", PULSE_WIDTH_0_DEGREE);
+    printf("Door lock unlocked pulse: %dus (90°)\n\n", PULSE_WIDTH_90_DEGREE);
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
 
     // Main light PWM init on PC_9 (TIM3_CH4): 100Hz, start at full brightness
     led_mainLighting_pwm.period_ms(10);
     led_mainLighting_pwm.write(1.0f);
     g_brightness = 100;
-
-    doorLock = DOOR_LOCK_LOCKED;
 
     lcd_init();
     keypad_init();
@@ -1495,12 +1545,18 @@ int main(void)
         if (auth_unlocked != last_auth_state) {
             last_auth_state = auth_unlocked;
             if (auth_unlocked) {
+<<<<<<< HEAD
                 // Just unlocked - show options screen
+=======
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
                 lcdmessage(Message1, 1);
                 lcdmessage(Message2, 2);
                 printf("[LCD] Unlocked - showing options\n");
             } else {
+<<<<<<< HEAD
                 // Locked - show locked screen
+=======
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
                 lcdmessage(MessageLocked, 1);
                 lcdmessage(MessageLocked2, 2);
                 printf("[LCD] Locked\n");
@@ -1511,6 +1567,7 @@ int main(void)
             key_pending = false;
             char key = last_key;
 
+<<<<<<< HEAD
             // Only process keys if unlocked
             if (auth_unlocked) {
                 if (in_fan_menu) {
@@ -1518,6 +1575,12 @@ int main(void)
                     uint8_t speed = fan_menu_selection_to_speed(key);
                     if (speed != 255) {
                         // Update LOCAL timestamp
+=======
+            if (auth_unlocked) {
+                if (in_fan_menu) {
+                    uint8_t speed = fan_menu_selection_to_speed(key);
+                    if (speed != 255) {
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
                         fan_timestamp_mutex.lock();
                         last_fan_local_change = now_ms();
                         fan_timestamp_mutex.unlock();
@@ -1546,7 +1609,10 @@ int main(void)
                         }
                         exit_fan_menu();
                         thread_sleep_for(1000);
+<<<<<<< HEAD
                         // Return to options screen
+=======
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
                         lcdmessage(Message1, 1);
                         lcdmessage(Message2, 2);
                     } else {
@@ -1559,7 +1625,10 @@ int main(void)
                     }
                     refresh_fan_menu_timeout();
                 } else {
+<<<<<<< HEAD
                     // Main menu handler
+=======
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
                     switch (key) {
                         case '1':
                             printf("1 is pressed -- toggling Blind\n");
@@ -1602,9 +1671,13 @@ int main(void)
                     }
                 }
             } else {
+<<<<<<< HEAD
                 // Key pressed but locked
                 printf("Keypad: Locked - RFID required\n");
                 // Show locked message briefly
+=======
+                printf("Keypad: Locked - RFID required\n");
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
                 lcdmessage("RFID Required!", 1);
                 lcdmessage(MessageLocked2, 2);
                 thread_sleep_for(1000);
@@ -1643,7 +1716,10 @@ int main(void)
         if (rfid == 1 || rfid == 2) {
             set_keypad_unlocked(true);
             printf("[AUTH] Keypad unlocked for %d seconds\n", RFID_UNLOCK_DURATION_MS / 1000);
+<<<<<<< HEAD
             // Show options screen
+=======
+>>>>>>> f4dfa91ded4caa2ba4903fc74bfb9cf6129f4aaa
             lcdmessage(Message1, 1);
             lcdmessage(Message2, 2);
             last_auth_state = true;
