@@ -38,28 +38,32 @@
 #define ESP_RX            PC_11
 #define DHT11_PIN         PC_4
 #define CURRENT_SENSOR_PIN PA_0
-#define MAIN_LIGHT_PIN    PC_9
+#define MAIN_LIGHT_PIN    PB_1      // Main light PWM. PB_1 = TIM3_CH4 DEFAULT
+                                    // remap -- NOT PC_9! PC_9 forces TIM3 full
+                                    // remap which re-routes TIM3_CH2 away from
+                                    // PA_7, silently killing the blind motor.
+                                    // PB_1 keeps ALL TIM3 users on default remap
+                                    // (motor PA_7 CH2, door PA_6 CH1, light PB_1
+                                    // CH4) so every channel actually outputs.
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PC_8      // SG90 door-lock servo. PC_8 = TIM3_CH3
-                                    // (AFIO remap 9 = full) -- ACTIVE in
-                                    // NUCLEO_F103RB PeripheralPins.c, same
-                                    // timer/remap as the PC_9 main light.
-                                    // DO NOT use PA_3 (STDIO_UART_RX, excluded
-                                    // from pinmap), PB_7 (TIM4 = us_ticker,
-                                    // excluded), or PC_6 (LCD_WR) -- those die
-                                    // with 0x80010130 or fight the LCD strobe.
-                                    // LCD_WR stays on PC_6 (GPIO -- unaffected
-                                    // by the TIM3 remap, which only applies to
-                                    // pins in alternate-function mode).
+#define DOOR_LOCK_PIN     PA_6      // SG90 door-lock servo. PA_6 = TIM3_CH1
+                                    // DEFAULT remap -- same mode as the PA_7
+                                    // blind motor and PB_1 light (no AFIO fight).
+                                    // NOT PC_8 (full-remap pin would re-trigger
+                                    // the remap conflict). NOT PA_3/PB_7 (excluded
+                                    // from pinmap -> 0x80010130), NOT PC_6 (LCD_WR).
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)
 
-// Motor / Servo Timings
+// Motor / Servo Timings - SG90 standard servo (0° to 180°)
 #define WAIT_TIME_MS_0        2000
 #define PERIOD_WIDTH          20
-#define PULSE_WIDTH_90_DEGREE   2400
-#define PULSE_WIDTH_0_DEGREE    1500
-#define PULSE_WIDTH_N_90_DEGREE 600
+
+// SG90 servo - actual pulse widths (calibrated)
+#define PULSE_WIDTH_0_DEGREE    600     // 0°   - CLOSED/LOCKED
+#define PULSE_WIDTH_90_DEGREE   1500    // 90°  - MID/NEUTRAL
+#define PULSE_WIDTH_180_DEGREE  2400    // 180° - OPEN/UNLOCKED
+#define PULSE_WIDTH_N_90_DEGREE 600     // -90° (reverse, kept for compat)
 
 
 // Fan Servo (360° continuous rotation)

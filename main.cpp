@@ -227,8 +227,11 @@ static uint8_t fan_menu_selection_to_speed(char key)
 // ============================================================
 // MAIN LIGHTING PWM (0-100% -> PWM duty cycle)
 // ============================================================
-// PC_9 = TIM3_CH4 - confirmed PWM-capable in NUCLEO_F103RB pinmap.
-static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PC_9
+// PB_1 = TIM3_CH4 (default remap) - active in NUCLEO_F103RB pinmap.
+// NOT PC_9: PC_9 forces TIM3 full remap which silently kills the PA_7
+// blind motor (TIM3_CH2 default). Keeping every TIM3 user on default
+// remap lets all three channels (PA_6 door, PA_7 motor, PB_1 light) output.
+static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PB_1
 
 static Mutex   brightness_mutex;
 static volatile uint8_t g_brightness = 100;  // 0-100%
@@ -406,13 +409,10 @@ static void set_door_lock(bool locked)
     door_mutex.unlock();
 
     // SG90 servo control with pulse widths
-    if (locked) {
-        doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // 1500us - middle position
-        printf("[DOOR] Locked (pulse: %dus)\n", PULSE_WIDTH_0_DEGREE);
-    } else {
-        doorLock.pulsewidth_us(PULSE_WIDTH_90_DEGREE);  // 2400us - full open
-        printf("[DOOR] Unlocked (pulse: %dus)\n", PULSE_WIDTH_90_DEGREE);
-    }
+    uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
+    printf("[DOOR] Setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
+    doorLock.pulsewidth_us(pulse);
+    thread_sleep_for(500);  // Wait for movement
 }
 
 static uint8_t get_fan_speed(void)
@@ -593,18 +593,9 @@ static float motor_init(void)
 {
     motor.period_ms(PERIOD_WIDTH);
     motor.pulsewidth_us(PULSE_WIDTH_0_DEGREE);
-    printf("Move to 0 position: Middle\n");
+    printf("[MOTOR] Initialized to %dus (CLOSED/0°)\n", PULSE_WIDTH_0_DEGREE);
     thread_sleep_for(WAIT_TIME_MS_0);
     return 0.0f;
-}
-
-static float motor_position_to_angle(float pulse_width_us)
-{
-    motor.pulsewidth_us(pulse_width_us);
-    printf("Motor moving\n");
-    thread_sleep_for(WAIT_TIME_MS_0);
-    float angle = ((pulse_width_us - PULSE_WIDTH_0_DEGREE) / (float)(PULSE_WIDTH_90_DEGREE - PULSE_WIDTH_0_DEGREE)) * 90.0f;
-    return angle;
 }
 
 //  THINGSPEAK FIELD TABLE
@@ -1080,7 +1071,16 @@ static void apply_main_lighting(bool on)
 
 static void apply_blind(bool open)
 {
-    motor_position_to_angle(open ? PULSE_WIDTH_90_DEGREE : PULSE_WIDTH_0_DEGREE);
+    printf("[DS] apply_blind called with open=%d\n", open);
+
+    // Direct servo control with correct SG90 pulse values:
+    // OPEN = 180° (2400us), CLOSED = 0° (600us)
+    uint16_t pulse = open ? PULSE_WIDTH_180_DEGREE : PULSE_WIDTH_0_DEGREE;
+    printf("[DS] Blind: setting pulse to %dus (%s)\n", pulse, open ? "OPEN" : "CLOSED");
+
+    motor.pulsewidth_us(pulse);
+    thread_sleep_for(1000);  // Wait for movement
+
     last_blind_open = open;
     blind_known = true;
     printf("[DS] blind -> %s\n", open ? "OPEN" : "CLOSED");
@@ -1152,13 +1152,14 @@ static void apply_door_lock(bool locked)
     door_locked = locked;
     door_mutex.unlock();
 
-    if (locked) {
-        doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // 1500us - locked position
-        printf("[DS] door -> LOCKED (pulse: %dus)\n", PULSE_WIDTH_0_DEGREE);
-    } else {
-        doorLock.pulsewidth_us(PULSE_WIDTH_90_DEGREE);  // 2400us - unlocked position
-        printf("[DS] door -> UNLOCKED (pulse: %dus)\n", PULSE_WIDTH_90_DEGREE);
-    }
+    // Direct servo control with correct SG90 pulse values:
+    // LOCKED = 0° (600us), UNLOCKED = 180° (2400us)
+    uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
+    printf("[DS] Door: setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
+    doorLock.pulsewidth_us(pulse);
+    thread_sleep_for(500);  // Wait for movement
+
+    printf("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
 }
 
 static bool poll_device_state_via_relay(void)
@@ -1467,14 +1468,15 @@ int main(void)
     
     // Initialize door lock servo (SG90)
     doorLock.period_ms(PERIOD_WIDTH);
-    doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // Start locked (1500us)
+    doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // Start locked (600us / 0°)
     
     printf("\n=== SERVOS INITIALIZED ===\n");
     printf("Fan neutral duty: 0.075 (7.5%%)\n");
     printf("Door lock locked pulse: %dus (0°)\n", PULSE_WIDTH_0_DEGREE);
-    printf("Door lock unlocked pulse: %dus (90°)\n\n", PULSE_WIDTH_90_DEGREE);
+    printf("Door lock unlocked pulse: %dus (180°)\n\n", PULSE_WIDTH_180_DEGREE);
 
-    // Main light PWM init on PC_9 (TIM3_CH4): 100Hz, start at full brightness
+    // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
+    // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
     led_mainLighting_pwm.period_ms(10);
     led_mainLighting_pwm.write(1.0f);
     g_brightness = 100;
