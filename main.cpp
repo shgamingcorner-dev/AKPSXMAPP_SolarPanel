@@ -1030,7 +1030,7 @@ static bool send_device_state_via_relay(const char *field, bool value)
             confirmed_fan_mutex.lock();
             confirmed_fan_power = value;
             confirmed_fan_mutex.unlock();
-        } else if (strcmp(field, "smart_lock") == 0) {
+        } else if (strcmp(field, "door_locked") == 0) {
             confirmed_door_mutex.lock();
             confirmed_door_locked = value;
             confirmed_door_mutex.unlock();
@@ -1314,15 +1314,15 @@ static bool poll_device_state_via_relay(void)
             send_device_state_int_via_relay("fan_speed", current_speed);
         }
 
-        // Door lock: mirrors the blind system. Poll smart_lock -- the WEBSITE
-        // writes smart_lock, and the relay does NOT alias it to door_locked
-        // anymore (verified live: POST field=smart_lock leaves door_locked
-        // unchanged). Polling the stale door_locked column made the firmware
-        // "unlock" the door against the website within one poll cycle.
+        // Door lock: mirrors the blind system EXACTLY -- one field end-to-end.
+        // The WEBSITE writes door_locked via POST /api/device/door
+        // (relay.py relay_door: payload = {'door_locked': ...}); the firmware
+        // polls door_locked, and the keypad pushes door_locked. smart_lock is
+        // a legacy duplicate column the relay keeps in sync (aliasing).
         // The 15s grace below protects a fresh keypad '2' push from being
         // overwritten by a stale remote read while its push is in flight.
-        bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
-                              || strstr(g_rx, "\"smart_lock\": true") != NULL;
+        bool door_locked_state = strstr(g_rx, "\"door_locked\":true") != NULL
+                              || strstr(g_rx, "\"door_locked\": true") != NULL;
 
         printf("[DS] Door poll: relay says %s, local is %s\n",
                door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
@@ -1459,15 +1459,16 @@ static void network_task(void)
         // flag (request_door_toggle); we consume it here, compute the new
         // state from last_door_locked, push it to the relay, and queue the
         // actuation for the MAIN loop (which owns apply_door_lock + servo).
-        // Push smart_lock: the relay aliases it to BOTH door_locked and
-        // smart_lock, keeping the columns in sync.
+        // Push door_locked -- the SAME column the website writes via
+        // POST /api/device/door (relay.py relay_door). The relay aliases it
+        // to smart_lock so both columns stay in sync.
         if (consume_pending_door_toggle()) {
             bool new_door_locked = !last_door_locked;
             printf("[NET] Door toggle: %s -> %s\n",
                    last_door_locked ? "LOCKED" : "UNLOCKED",
                    new_door_locked ? "LOCKED" : "UNLOCKED");
             request_door_actuate(new_door_locked);
-            if (!send_device_state_via_relay("smart_lock", new_door_locked)) {
+            if (!send_device_state_via_relay("door_locked", new_door_locked)) {
                 printf("[WARN] Door state push failed\n");
                 consecutive_failures++;
             } else {
