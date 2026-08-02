@@ -1314,13 +1314,15 @@ static bool poll_device_state_via_relay(void)
             send_device_state_int_via_relay("fan_speed", current_speed);
         }
 
-        // Door lock is controlled from Supabase ONLY -- the firmware never
-        // pushes door state (the smart_lock push caused conflicting writes /
-        // state reverts). The poll is the single writer of the local door
-        // state and applies changes directly. Door has no local keypad
-        // control, so no grace period is needed.
-        bool door_locked_state = strstr(g_rx, "\"door_locked\":true") != NULL
-                              || strstr(g_rx, "\"door_locked\": true") != NULL;
+        // Door lock: mirrors the blind system. Poll smart_lock -- the WEBSITE
+        // writes smart_lock, and the relay does NOT alias it to door_locked
+        // anymore (verified live: POST field=smart_lock leaves door_locked
+        // unchanged). Polling the stale door_locked column made the firmware
+        // "unlock" the door against the website within one poll cycle.
+        // The 15s grace below protects a fresh keypad '2' push from being
+        // overwritten by a stale remote read while its push is in flight.
+        bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
+                              || strstr(g_rx, "\"smart_lock\": true") != NULL;
 
         printf("[DS] Door poll: relay says %s, local is %s\n",
                door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
