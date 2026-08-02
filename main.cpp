@@ -59,7 +59,6 @@ static uint64_t last_lighting_local_change = 0;
 static uint64_t last_blind_local_change = 0;
 static uint64_t last_fan_local_change = 0;
 static uint64_t last_fan_remote_change = 0;
-static uint64_t last_door_local_change = 0;
 
 static bool confirmed_lighting = false;
 static bool confirmed_blind = false;
@@ -70,7 +69,6 @@ static bool confirmed_door_locked = true;
 static Mutex lighting_timestamp_mutex;
 static Mutex blind_timestamp_mutex;
 static Mutex fan_timestamp_mutex;
-static Mutex door_timestamp_mutex;
 
 static Mutex confirmed_lighting_mutex;
 static Mutex confirmed_blind_mutex;
@@ -314,10 +312,6 @@ static volatile bool pending_fan_actuate = false;
 static volatile uint8_t pending_fan_speed = 0;
 static volatile bool pending_fan_power = false;
 
-static Mutex   door_actuate_mutex;
-static volatile bool pending_door_actuate = false;
-static volatile bool pending_door_locked = false;
-
 static void request_fan_actuate(uint8_t speed, bool power, bool from_remote = false)
 {
     fan_actuate_mutex.lock();
@@ -337,18 +331,6 @@ static void request_fan_actuate(uint8_t speed, bool power, bool from_remote = fa
     }
 }
 
-static void request_door_actuate(bool locked)
-{
-    door_actuate_mutex.lock();
-    pending_door_actuate = true;
-    pending_door_locked = locked;
-    door_actuate_mutex.unlock();
-
-    door_timestamp_mutex.lock();
-    last_door_local_change = now_ms();
-    door_timestamp_mutex.unlock();
-}
-
 static bool consume_pending_fan_actuate(uint8_t *out_speed, bool *out_power)
 {
     fan_actuate_mutex.lock();
@@ -359,18 +341,6 @@ static bool consume_pending_fan_actuate(uint8_t *out_speed, bool *out_power)
         pending_fan_actuate = false;
     }
     fan_actuate_mutex.unlock();
-    return v;
-}
-
-static bool consume_pending_door_actuate(bool *out_locked)
-{
-    door_actuate_mutex.lock();
-    bool v = pending_door_actuate;
-    if (v) {
-        *out_locked = pending_door_locked;
-        pending_door_actuate = false;
-    }
-    door_actuate_mutex.unlock();
     return v;
 }
 
@@ -1288,28 +1258,22 @@ static bool poll_device_state_via_relay(void)
             send_device_state_int_via_relay("fan_speed", current_speed);
         }
 
-        // POLL door_locked, PUSH smart_lock (hybrid, live-verified against relay):
-        //   - The relay returns BOTH fields, and they can drift apart
-        //     (observed: {"door_locked":false,"smart_lock":true}).
-        //   - Polling door_locked accepts changes written to EITHER column:
-        //     the frontend's smart_lock writes are aliased by the relay to
-        //     door_locked too, and manual Supabase edits to door_locked are
-        //     seen directly. Polling smart_lock alone missed manual edits.
-        //   - Pushing smart_lock keeps BOTH columns in sync (POST smart_lock
-        //     updates both); pushing door_locked only updated door_locked and
-        //     was what caused the drift.
+        // Door lock is controlled from Supabase ONLY -- the firmware never
+        // pushes door state (the smart_lock push caused conflicting writes /
+        // state reverts). The poll is the single writer of the local door
+        // state and applies changes directly. Door has no local keypad
+        // control, so no grace period is needed.
         bool door_locked_state = strstr(g_rx, "\"door_locked\":true") != NULL
                               || strstr(g_rx, "\"door_locked\": true") != NULL;
 
-        // No local keypad control exists for the door -- every change comes
-        // from remote. Apply it immediately; the grace-period check is removed
-        // (it only delayed remote changes and ignored them for the first 15s
-        // after boot because last_door_local_change starts at 0).
+        printf("[DS] Door poll: relay says %s, local is %s\n",
+               door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
+               get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
+
         if (door_locked_state != get_door_locked()) {
-            printf("[DS] Door poll: relay says %s, local is %s\n",
-                   door_locked_state ? "UNLOCKED (false)" : "LOCKED (true)",
-                   get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
-            request_door_actuate(door_locked_state);
+            printf("[DS] Applying door state from relay: %s\n",
+                   door_locked_state ? "LOCKED" : "UNLOCKED");
+            apply_door_lock(door_locked_state);
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -1422,21 +1386,10 @@ static void network_task(void)
             }
         }
 
-        bool door_locked_req;
-        if (consume_pending_door_actuate(&door_locked_req)) {
-            request_door_actuate(door_locked_req);
-            // Push to the SAME column the poll reads (smart_lock). Pushing
-            // "door_locked" desynced the two relay columns (frontend reads
-            // smart_lock; firmware-only door_locked drifted -> apparent revert).
-            printf("[NET] Pushing door state to relay: smart_lock=%s\n",
-                   door_locked_req ? "true" : "false");
-            if (!send_device_state_via_relay("smart_lock", door_locked_req)) {
-                printf("[WARN] Door lock push failed\n");
-                consecutive_failures++;
-            } else {
-                printf("[NET] Door push successful\n");
-            }
-        }
+        // Door lock: remote-only control from Supabase. No local push --
+        // poll_device_state_via_relay() applies remote changes directly.
+        // (The former smart_lock push here caused conflicting writes /
+        // state reverts.)
 
         if (now - last_device_state_poll >= DEVICE_STATE_POLL_MS) {
             last_device_state_poll = now;
@@ -1682,11 +1635,8 @@ int main(void)
             apply_fan(fan_speed_req, fan_power_req);
         }
 
-        // ---- Consume pending door lock actuation request ----
-        bool door_locked_req;
-        if (consume_pending_door_actuate(&door_locked_req)) {
-            apply_door_lock(door_locked_req);
-        }
+        // ---- Door lock is applied directly inside poll_device_state_via_relay() ----
+        // (remote-only control; no main-loop consume needed)
 
         // ---- RFID read every loop iteration (every 10ms) --------
         rfid = read_RFID();
