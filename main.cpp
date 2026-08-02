@@ -404,6 +404,8 @@ static void set_fan_power(bool on)
 
 static void set_door_lock(bool locked)
 {
+    printf("[DOOR] set_door_lock called with locked=%d\n", locked);
+
     door_mutex.lock();
     door_locked = locked;
     door_mutex.unlock();
@@ -413,6 +415,23 @@ static void set_door_lock(bool locked)
     printf("[DOOR] Setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
     doorLock.pulsewidth_us(pulse);
     thread_sleep_for(500);  // Wait for movement
+}
+
+// Diagnostic sweep: verifies the PA_6 door servo hardware end-to-end.
+// REMOVE this call from main() once the servo is confirmed moving.
+static void test_door_servo(void)
+{
+    printf("\n=== TESTING DOOR SERVO (PA_6) ===\n");
+    printf("LOCKED (600us)...\n");
+    doorLock.pulsewidth_us(600);
+    thread_sleep_for(2000);
+    printf("UNLOCKED (2400us)...\n");
+    doorLock.pulsewidth_us(2400);
+    thread_sleep_for(2000);
+    printf("LOCKED (600us)...\n");
+    doorLock.pulsewidth_us(600);
+    thread_sleep_for(2000);
+    printf("=== DOOR SERVO TEST COMPLETE ===\n");
 }
 
 static uint8_t get_fan_speed(void)
@@ -828,16 +847,15 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     fmt_float(hum_s,  sizeof(hum_s),  humidity);
     fmt_float(pow_s,  sizeof(pow_s),  power);
 
-    uint8_t fan_speed = get_fan_speed();
-    bool fan_power = get_fan_power();
-    bool door_locked = get_door_locked();
-
+    // NOTE: telemetry carries SENSOR data only. Device states (door_locked,
+    // fan_power, fan_speed) must NOT be sent here -- pushing local states every
+    // 15s was overwriting remote (dashboard) changes in Supabase, causing the
+    // door lock to "revert" ~15s after being changed remotely. Device states
+    // are pushed only on change in network_task().
     char body[BUF];
     snprintf(body, sizeof(body),
-        "secret=%s&temperature=%s&humidity=%s&power=%s&fan_speed=%u&fan_power=%s&door_locked=%s&seq=%lu",
+        "secret=%s&temperature=%s&humidity=%s&power=%s&seq=%lu",
         RELAY_SECRET, temp_s, hum_s, pow_s,
-        fan_speed, fan_power ? "true" : "false",
-        door_locked ? "true" : "false",
         (unsigned long)g_seq++);
     int body_len = strlen(body);
 
@@ -988,7 +1006,7 @@ static bool send_device_state_via_relay(const char *field, bool value)
             confirmed_fan_mutex.lock();
             confirmed_fan_power = value;
             confirmed_fan_mutex.unlock();
-        } else if (strcmp(field, "door_locked") == 0) {
+        } else if (strcmp(field, "smart_lock") == 0) {
             confirmed_door_mutex.lock();
             confirmed_door_locked = value;
             confirmed_door_mutex.unlock();
@@ -1148,6 +1166,8 @@ static void apply_fan(uint8_t speed, bool on)
 
 static void apply_door_lock(bool locked)
 {
+    printf("[DS] apply_door_lock called with locked=%d\n", locked);
+
     door_mutex.lock();
     door_locked = locked;
     door_mutex.unlock();
@@ -1271,16 +1291,15 @@ static bool poll_device_state_via_relay(void)
         bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
                               || strstr(g_rx, "\"smart_lock\": true") != NULL;
 
+        // No local keypad control exists for the door -- every change comes
+        // from remote. Apply it immediately; the grace-period check is removed
+        // (it only delayed remote changes and ignored them for the first 15s
+        // after boot because last_door_local_change starts at 0).
         if (door_locked_state != get_door_locked()) {
-            door_timestamp_mutex.lock();
-            bool door_recent = (now_ms() - last_door_local_change <= 15000);
-            door_timestamp_mutex.unlock();
-
-            if (!door_recent) {
-                request_door_actuate(door_locked_state);
-            } else {
-                printf("[DS] Ignoring remote door (local change < 15s ago)\n");
-            }
+            printf("[DS] Door poll: relay=%s, local=%s -> applying\n",
+                   door_locked_state ? "UNLOCKED" : "LOCKED",
+                   get_door_locked() ? "LOCKED" : "UNLOCKED");
+            request_door_actuate(door_locked_state);
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -1396,7 +1415,10 @@ static void network_task(void)
         bool door_locked_req;
         if (consume_pending_door_actuate(&door_locked_req)) {
             request_door_actuate(door_locked_req);
-            if (!send_device_state_via_relay("door_locked", door_locked_req)) {
+            // Push to the SAME column the poll reads (smart_lock). Pushing
+            // "door_locked" desynced the two relay columns (frontend reads
+            // smart_lock; firmware-only door_locked drifted -> apparent revert).
+            if (!send_device_state_via_relay("smart_lock", door_locked_req)) {
                 printf("[WARN] Door lock push failed\n");
                 consecutive_failures++;
             }
@@ -1474,6 +1496,8 @@ int main(void)
     printf("Fan neutral duty: 0.075 (7.5%%)\n");
     printf("Door lock locked pulse: %dus (0°)\n", PULSE_WIDTH_0_DEGREE);
     printf("Door lock unlocked pulse: %dus (180°)\n\n", PULSE_WIDTH_180_DEGREE);
+
+    test_door_servo();  // DIAGNOSTIC: 600->2400->600us sweep. REMOVE after verifying.
 
     // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
     // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
