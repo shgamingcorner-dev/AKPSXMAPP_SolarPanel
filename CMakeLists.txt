@@ -20,6 +20,10 @@ project(${APP_TARGET})
 target_sources(${APP_TARGET}
     PRIVATE
         main.cpp
+        DHT11.cpp
+        MFRC522.cpp
+        keypad_utilities.cpp
+        lcd_utilities.cpp
 )
 
 target_link_libraries(${APP_TARGET}

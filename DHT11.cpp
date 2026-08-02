@@ -46,92 +46,111 @@ int DHT11::readRawData(byte data[5])
     pin_DHT11.output(); //set as output pin
     pin_DHT11 = 1;      //intial state: set pin as HIGH
     thread_sleep_for(_delayMS);
-      
+
     pin_DHT11 = 0;      //start signal to the DHT11
-    //thread_sleep_for(18);
     thread_sleep_for(20); //keep the LOW signal a bit longer than 18ms
-    pin_DHT11 = 1;        //set the pin to HIGH
-    //wait_us(40);
+
+    // ---- Timing-critical window -------------------------------------------
+    // DHT11 bit cells are only 26-70us wide; a preemption (RTOS tick, keypad
+    // ISR, UART IRQ) mid-read corrupts the sample and produces checksum errors.
+    // Run the whole transfer with interrupts masked. Inside this window use
+    // only microsecond busy-waits -- no printf, no thread_sleep_for.
+    // Timeouts are short (us): a missing/dead sensor now fails fast instead of
+    // stalling the caller for TIMEOUT_DURATION (1000ms).
+    CriticalSectionLock lock;
+
+    pin_DHT11 = 1;        //set the pin to HIGH - DHT11 responds within ~40us
     wait_us(30);          //wait for 30us, max is 40us per the spec
+    pin_DHT11.input();    //set the pin as input and wait for DHT11 pulling down the signal
 
-    pin_DHT11.input();     //set the pin as input and wait for DHT11 pulling down the signal
+    t.reset();            //reset the timer
 
-    t.reset();              //reset the timer
-    int timeout_start = duration_cast<milliseconds> (t.elapsed_time()).count(); //get the starting time
-
-    while (pin_DHT11 == 1) //check the pin signal level with timer out: 1000ms
+    // Wait for the 80us response LOW (fail fast if the sensor is dead)
+    uint64_t t0 = duration_cast<microseconds>(t.elapsed_time()).count();
+    while (pin_DHT11 == 1)
     {
-        if ( ( duration_cast<milliseconds> (t.elapsed_time()).count() - timeout_start ) > TIMEOUT_DURATION)
+        if (duration_cast<microseconds>(t.elapsed_time()).count() - t0 > 1000)
         {
-            printf ("return Error 1\n");
             return DHT11::ERROR_TIMEOUT;
         }
     }
 
-    if (pin_DHT11 == 0)
+    // Wait for the rising edge of the 80us response HIGH
+    t0 = duration_cast<microseconds>(t.elapsed_time()).count();
+    while (pin_DHT11 == 0)
     {
-        wait_us(80);
-        if (pin_DHT11 == 1)
+        if (duration_cast<microseconds>(t.elapsed_time()).count() - t0 > 200)
         {
-            wait_us(80);
-            for (int i = 0; i < 5; i++)
+            return DHT11::ERROR_TIMEOUT;
+        }
+    }
+
+    // Consume the rest of the 80us response HIGH: wait for its falling edge.
+    // The bit loop below expects the line LOW at the start of the first bit's
+    // 50us preamble; without this wait the first bit is sampled mid-ack-high
+    // and byte 0 decodes wrong (checksum fails on every read).
+    t0 = duration_cast<microseconds>(t.elapsed_time()).count();
+    while (pin_DHT11 == 1)
+    {
+        if (duration_cast<microseconds>(t.elapsed_time()).count() - t0 > 200)
+        {
+            return DHT11::ERROR_TIMEOUT;
+        }
+    }
+
+    for (int i = 0; i < 5; i++)
+    {
+        byte value = 0;
+
+        for (int bit = 0; bit < 8; bit++)
+        {
+            // Wait for rising edge of this bit (50us low preamble)
+            t0 = duration_cast<microseconds>(t.elapsed_time()).count();
+            while (pin_DHT11 == 0)
             {
-                //read byte
+                if (duration_cast<microseconds>(t.elapsed_time()).count() - t0 > 150)
                 {
-                    byte value = 0;
-
-                    for (int i = 0; i < 8; i++)
-                    {
-                        // Wait for rising edge with timeout (~50us max per DHT11 spec)
-                        uint64_t bit_timeout = duration_cast<microseconds>(t.elapsed_time()).count() + 100;
-                        while (pin_DHT11 == 0) {
-                            if (duration_cast<microseconds>(t.elapsed_time()).count() > bit_timeout) {
-                                printf("return bit timeout rising\n");
-                                return DHT11::ERROR_TIMEOUT;
-                            }
-                        }
-
-                        wait_us(30);
-                        //wait_us(20);
-
-                        if (pin_DHT11 == 1)
-                        {
-                            value |= (1 << (7 - i));
-                        }
-                        // Wait for falling edge with timeout (~70us max per DHT11 spec)
-                        bit_timeout = duration_cast<microseconds>(t.elapsed_time()).count() + 120;
-                        while (pin_DHT11 == 1) {
-                            if (duration_cast<microseconds>(t.elapsed_time()).count() > bit_timeout) {
-                                printf("return bit timeout falling\n");
-                                return DHT11::ERROR_TIMEOUT;
-                            }
-                        }
-
-                    }
-
-                    data[i] = value;
-                }
-
-                if (data[i] == DHT11::ERROR_TIMEOUT)
-                {
-                    printf ("return error 2\n");
                     return DHT11::ERROR_TIMEOUT;
                 }
             }
 
-            if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
+            wait_us(30);  // sample mid-bit: '0' = 26-28us high, '1' = 70us high
+
+            if (pin_DHT11 == 1)
             {
-                return 0; // Success
+                value |= (1 << (7 - bit));
             }
-            else
+
+            // Wait for falling edge of this bit -- but NOT after the final bit.
+            // The falling-edge wait only syncs to the NEXT bit's 50us preamble;
+            // after the last bit there is no next bit, so do not require an edge
+            // (modules differ: some drive a trailing edge, some release the bus
+            // HIGH -- both must decode successfully).
+            if (i == 4 && bit == 7)
             {
-                printf ("return error 3\n");
-                return DHT11::ERROR_CHECKSUM;
+                break;
+            }
+            t0 = duration_cast<microseconds>(t.elapsed_time()).count();
+            while (pin_DHT11 == 1)
+            {
+                if (duration_cast<microseconds>(t.elapsed_time()).count() - t0 > 150)
+                {
+                    return DHT11::ERROR_TIMEOUT;
+                }
             }
         }
+
+        data[i] = value;
     }
-    printf ("return 4\n");
-    return DHT11::ERROR_TIMEOUT;
+
+    if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
+    {
+        return 0; // Success
+    }
+    else
+    {
+        return DHT11::ERROR_CHECKSUM;
+    }
 }
 
 

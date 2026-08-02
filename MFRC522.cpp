@@ -36,6 +36,11 @@ MFRC522::MFRC522(PinName chipSelectPin,		///<  pin connected to MFRC522's SPI sl
 	_chipSelectPin = chipSelectPin;
 	_resetPowerDownPin = resetPowerDownPin;
 
+	// Configure the shared SPI bus ONCE here. Creating fresh SPI/DigitalOut
+	// objects on every register call re-inits the peripheral each time and is
+	// a documented cause of intermittent MFRC522 communication failures.
+	_spi.frequency(MFRC522_SPICLOCK); //4MHz
+	_spi.format(8, 0); //MSBFIRST, SPI_MODE0
 } // End constructor
 
 /////////////////////////////////////////////////////////////////////////////////////
@@ -49,16 +54,12 @@ MFRC522::MFRC522(PinName chipSelectPin,		///<  pin connected to MFRC522's SPI sl
 void MFRC522::PCD_WriteRegister(	PCD_Register reg,	///< The register to write to. One of the PCD_Register enums.
 									byte value			///< The value to write.
 								) {
-	SPI spi( PB_5,  PB_4,  PB_3); // mosi, miso, sclk
-	spi.frequency(MFRC522_SPICLOCK); //4MHz
-	spi.format(8, 0); //MSBFIRST, SPI_MODE0
-	DigitalOut MFRC522_chipSelectPin(_chipSelectPin);
-	MFRC522_chipSelectPin = 0;	// Select slave
+	_csPin = 0;	// Select slave
 	
-	spi.write(reg);						// MSB == 0 is for writing. LSB is not used in address. Datasheet section 8.1.2.3.
-	spi.write(value);
+	_spi.write(reg);					// MSB == 0 is for writing. LSB is not used in address. Datasheet section 8.1.2.3.
+	_spi.write(value);
 
-	MFRC522_chipSelectPin = 1;		// Release slave again
+	_csPin = 1;		// Release slave again
 
 	// Stop using the SPI bus
 } // End PCD_WriteRegister()
@@ -71,18 +72,13 @@ void MFRC522::PCD_WriteRegister(	PCD_Register reg,	///< The register to write to
 									byte count,			///< The number of bytes to write to the register
 									byte *values		///< The values to write. Byte array.
 								) {
-	SPI spi( PB_5,  PB_4,  PB_3); // mosi, miso, sclk
-	spi.frequency(MFRC522_SPICLOCK); //4MHz
-	spi.format(8, 0); //MSBFIRST, SPI_MODE0
+	_csPin = 0;	// Select slave
 
-	DigitalOut MFRC522_chipSelectPin(_chipSelectPin);
-	MFRC522_chipSelectPin = 0;	// Select slave
-
-	spi.write(reg);		// MSB == 0 is for writing. LSB is not used in address. Datasheet section 8.1.2.3.
+	_spi.write(reg);		// MSB == 0 is for writing. LSB is not used in address. Datasheet section 8.1.2.3.
 	for (byte index = 0; index < count; index++) {
-		spi.write(values[index]); 
+		_spi.write(values[index]); 
 	}
-	MFRC522_chipSelectPin = 1;		// Release slave again		
+	_csPin = 1;		// Release slave again		
 	// Stop using the SPI bus
 } // End PCD_WriteRegister()
 
@@ -93,17 +89,12 @@ void MFRC522::PCD_WriteRegister(	PCD_Register reg,	///< The register to write to
 byte MFRC522::PCD_ReadRegister(	PCD_Register reg	///< The register to read from. One of the PCD_Register enums.
 								) {
 	byte value;
-	SPI spi( PB_5,  PB_4,  PB_3); // mosi, miso, sclk
-	spi.frequency(MFRC522_SPICLOCK); //4MHz
-	spi.format(8, 0); //MSBFIRST, SPI_MODE0
+	_csPin = 0;	// Select slave		
 
-	DigitalOut MFRC522_chipSelectPin(_chipSelectPin);
-	MFRC522_chipSelectPin = 0;	// Select slave		
-
-	spi.write(0x80 | reg);					// MSB == 1 is for reading. LSB is not used in address. Datasheet section 8.1.2.3.
-	value = spi.write(0);					// Read the value back. Send 0 to stop reading.
+	_spi.write(0x80 | reg);				// MSB == 1 is for reading. LSB is not used in address. Datasheet section 8.1.2.3.
+	value = _spi.write(0);				// Read the value back. Send 0 to stop reading.
 	
-	MFRC522_chipSelectPin = 1;		// Release slave again		
+	_csPin = 1;		// Release slave again		
 	// Stop using the SPI bus
 	return value;
 } // End PCD_ReadRegister()
@@ -124,30 +115,25 @@ void MFRC522::PCD_ReadRegister(	PCD_Register reg,	///< The register to read from
 	byte address = 0x80 | reg;				// MSB == 1 is for reading. LSB is not used in address. Datasheet section 8.1.2.3.
 	byte index = 0;							// Index in values array.
 	
-	SPI spi( PB_5,  PB_4,  PB_3); // mosi, miso, sclk
-	spi.frequency(MFRC522_SPICLOCK); //4MHz
-	spi.format(8, 0); //MSBFIRST, SPI_MODE0
-
-	DigitalOut MFRC522_chipSelectPin(_chipSelectPin);
-	MFRC522_chipSelectPin = 0;	// Select slave	
+	_csPin = 0;	// Select slave	
 
 	count--;								// One read is performed outside of the loop
-	spi.write(address);					// Tell MFRC522 which address we want to read
+	_spi.write(address);					// Tell MFRC522 which address we want to read
 	if (rxAlign) {		// Only update bit positions rxAlign..7 in values[0]
 		// Create bit mask for bit positions rxAlign..7
 		byte mask = (0xFF << rxAlign) & 0xFF;
 		// Read value and tell that we want to read the same address again.
-		byte value = spi.write(address);
+		byte value = _spi.write(address);
 		// Apply mask to both current value of values[0] and the new data in value.
 		values[0] = (values[0] & ~mask) | (value & mask);
 		index++;
 	}
 	while (index < count) {
-		values[index] = spi.write(address);	// Read value and tell that we want to read the same address again.
+		values[index] = _spi.write(address);	// Read value and tell that we want to read the same address again.
 		index++;
 	}
-	values[index] = spi.write(0);			// Read the final byte. Send 0 to stop reading.
-	MFRC522_chipSelectPin = 1;		// Release slave again		
+	values[index] = _spi.write(0);			// Read the final byte. Send 0 to stop reading.
+	_csPin = 1;		// Release slave again
 	// Stop using the SPI bus
 } // End PCD_ReadRegister()
 
