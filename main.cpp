@@ -1296,9 +1296,9 @@ static bool poll_device_state_via_relay(void)
         // (it only delayed remote changes and ignored them for the first 15s
         // after boot because last_door_local_change starts at 0).
         if (door_locked_state != get_door_locked()) {
-            printf("[DS] Door poll: relay=%s, local=%s -> applying\n",
-                   door_locked_state ? "UNLOCKED" : "LOCKED",
-                   get_door_locked() ? "LOCKED" : "UNLOCKED");
+            printf("[DS] Door poll: relay says %s, local is %s\n",
+                   door_locked_state ? "UNLOCKED (false)" : "LOCKED (true)",
+                   get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
             request_door_actuate(door_locked_state);
         }
     } else {
@@ -1418,9 +1418,13 @@ static void network_task(void)
             // Push to the SAME column the poll reads (smart_lock). Pushing
             // "door_locked" desynced the two relay columns (frontend reads
             // smart_lock; firmware-only door_locked drifted -> apparent revert).
+            printf("[NET] Pushing door state to relay: smart_lock=%s\n",
+                   door_locked_req ? "true" : "false");
             if (!send_device_state_via_relay("smart_lock", door_locked_req)) {
                 printf("[WARN] Door lock push failed\n");
                 consecutive_failures++;
+            } else {
+                printf("[NET] Door push successful\n");
             }
         }
 
@@ -1497,7 +1501,8 @@ int main(void)
     printf("Door lock locked pulse: %dus (0°)\n", PULSE_WIDTH_0_DEGREE);
     printf("Door lock unlocked pulse: %dus (180°)\n\n", PULSE_WIDTH_180_DEGREE);
 
-    test_door_servo();  // DIAGNOSTIC: 600->2400->600us sweep. REMOVE after verifying.
+    // test_door_servo();  // DISABLED after hardware verification (was 6s boot sweep).
+                          // Re-enable to re-verify the PA_6 servo end-to-end.
 
     // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
     // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
