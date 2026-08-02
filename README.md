@@ -4,6 +4,10 @@ Made by Song Heng, Sean, Quan Biao, Ashton, Louis
 
 ## Mbed OS build tools
 
+## Mbed Os Studio
+The one our group uses is this you can download it from [here](https://github.com/ArmMbed). 
+Just choose STM32F103RB as the device and run it
+
 ### Mbed CLI 2
 Starting with version 6.5, Mbed OS uses Mbed CLI 2. It uses Ninja as a build system, and CMake to generate the build environment and manage the build process in a compiler-independent manner. If you are working with Mbed OS version prior to 6.5 then check the section [Mbed CLI 1](#mbed-cli-1).
 1. [Install Mbed CLI 2](https://os.mbed.com/docs/mbed-os/latest/build-tools/install-or-upgrade.html).
@@ -17,7 +21,9 @@ Starting with version 6.5, Mbed OS uses Mbed CLI 2. It uses Ninja as a build sys
 
 ## Application functionality
 
-The `main()` function is one of the two threads. It currently only runs the RFID checker.
+The `main()` function is one of the two threads. It owns RFID polling, the keypad/LCD,
+and the servo actuation consumers (blind, door, fan) that the network thread hands off
+to it.
 
 The other thread is called `network_task()`. It owns everything network-related: joining WiFi
 via the ESP-01, uploading sensor readings to ThingSpeak, and relaying Telegram alerts + Supabase
@@ -60,11 +66,20 @@ is why it's the current host.
   rail (see the WiFi instability note below). If a reading looks off-zero with nothing connected,
   recalibrate `ACS712_ZERO_V` in `main.cpp` to the value you actually measure — sensor offset and
   divider resistor tolerance both shift this slightly from the ideal 1.5V.
-- **Command Center Phase 1**: `poll_device_state_via_relay()` polls the relay's `GET /device-state`
-  route every `DEVICE_STATE_POLL_MS` (7s) and drives `led_mainLighting` (`MAIN_LIGHT_PIN`,
-  currently `PC_2`) and the blind servo (`PA_7`) to match the dashboard's `main_lighting` and
-  `blind` toggles in Supabase, only actuating on an actual value change. The keypad can drive
-  the same two devices from the hardware side — see below.
+- **Command Center**: `poll_device_state_via_relay()` polls the relay's `GET /device-state`
+  route every `DEVICE_STATE_POLL_MS` (7s) and drives the actuators to match the
+  dashboard's Supabase toggles, only actuating on an actual value change:
+  - **Main lighting** on `MAIN_LIGHT_PIN` (`PB_1` = TIM3_CH4, *default* remap — NOT `PC_9`,
+    whose full remap re-routes all of TIM3 and silently kills the PA_7 blind motor).
+  - **Blind servo** on `PA_7` (TIM3_CH2, default remap), SG90 0°/180° = 600µs/2400µs.
+  - **Fan** (`fan_power`/`fan_speed`), 360° continuous servo on `PA_1` (TIM2_CH2), neutral 1500µs.
+  - **Door lock** on `PA_6` (TIM3_CH1, default remap), SG90 LOCKED 600µs / UNLOCKED 2400µs.
+    Polls and pushes the `door_locked` column — the same field the dashboard writes via the
+    relay's `POST /api/device/door` — and the relay keeps the legacy `smart_lock` column
+    aliased to it, so the two can never drift apart.
+  The keypad drives the same devices from the hardware side: **1**=Blind, **2**=Door Lock,
+  **3**=Lighting, **4**=Fan speed menu. Local changes get a 15s grace period so a stale
+  remote read can't stomp a change whose relay push is still in flight.
 - **Telegram alerts**: fires on RFID scan via the relay's `/telegram` route, rate-limited by
   `TG_COOLDOWN_MS`.
 - **Supabase bridge**: sensor readings and RFID alerts are also pushed to Supabase
@@ -73,6 +88,24 @@ is why it's the current host.
   display real hardware data instead of its mock simulation. Both routes dedupe on a `seq` counter
   (upsert with `on_conflict=seq` + `ignore-duplicates`) so a retried request after an AT-command
   timeout doesn't create a duplicate row.
+- **Door lock + state-sync fixes** (the "door unlocks itself" saga): the door lock is an SG90
+  servo on `PA_6` (TIM3_CH1, default remap — same remap mode as the PA_7 blind and PB_1 light,
+  so no timer-remap fight), toggled by keypad **2**, and follows the dashboard's `door_locked`
+  column every 7s poll. Three bugs had to be killed to make it hold:
+  - **Telemetry overwrote the state.** The firmware used to include `door_locked`/`fan_power`/
+    `fan_speed` in the 15s telemetry body; the relay then PATCHed them into `device_states`.
+    Worse, once telemetry went sensors-only, the relay's `request.form.get('door_locked', 'false')`
+    default wrote `door_locked=false` *every 15s* anyway — the door "unlocked itself" ~15s after
+    any remote change. Fixed on both sides: firmware telemetry is sensors-only, and the relay
+    only writes fields actually present in the body (`if 'door_locked' in request.form:`).
+  - **Two DB columns, one door.** The dashboard writes `door_locked` (via `POST /api/device/door`);
+    a legacy `smart_lock` column existed too, and the two drifted apart. The firmware now polls
+    and pushes `door_locked` end-to-end (the field the dashboard actually writes), and the relay
+    aliases `smart_lock` ↔ `door_locked` on every write path so they can never disagree.
+  - **Local vs remote race.** The door uses the same two-flag pipeline as the blind (keypad
+    `toggle` flag → network thread pushes + queues an `actuate` flag → main loop moves the servo),
+    with a 15s grace period after a keypad press so a stale remote read can't re-apply while the
+    push is still in flight.
 - **Stability fixes**: RAM usage trimmed (smaller shared buffers, explicit thread stack size),
   and the Telegram response check now looks at the HTTP status line instead of searching for
   `"ok":true` in the JSON body, since the 256-byte read buffer can truncate the body before that
@@ -170,11 +203,15 @@ is why it's the current host.
 
 ## What is still to be done
 
-- **Other device-state fields.** `main_lighting` and `blind` are polled, actuated, and
-  writable from the keypad. The `DeviceState` type in the frontend also has `hvacPower`,
-  `smartLock`, and `securityArmState` — none have a corresponding actuator or relay route on
-  the hardware side yet. LCD menu items `2.Window` and `4.Fans` are stubbed in the keypad
-  handler for the same reason: no second servo or fan output is wired.
+- **Other device-state fields.** `main_lighting`, `blind`, `fan_power`/`fan_speed`, and
+  `door_locked` are polled, actuated, and writable from the keypad. The `DeviceState` type in
+  the frontend also has `hvacPower` and `securityArmState` — neither has a corresponding
+  actuator or relay route on the hardware side yet.
+- **Fan Supabase sync is racy.** The fan's actuate flag is consumed by *both* the network
+  thread (which pushes to the relay) and the main loop (which moves the servo) — first
+  consumer wins, so the fan can move locally while its dashboard push is skipped, or vice
+  versa. The blind/door use a two-flag pipeline that avoids this; the fan should be converted
+  to the same pattern.
 - **`gate_servo` was renamed to `blind`** across Supabase, the relay, the frontend, and the
   firmware — "gate" was never an accurate name for a window blind. If you find a `gate_servo`
   or `gateServo` reference anywhere, it is stale.
@@ -214,8 +251,11 @@ Your PC may take a few minutes to compile your code.
 Alternatively, you can manually copy the binary to the board, which you mount on the host computer over USB.
 
 ## Expected output
+PB14 LED will be red when sending information through wifi
+PB15 as well
 The LED will be red if there is no RFID in range
 Data will be uploaded to said thinkspeak
+Data will be sent to supabase
 
 ## Troubleshooting
 Text me or its just skill issue idk
