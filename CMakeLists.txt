@@ -24,6 +24,8 @@ target_sources(${APP_TARGET}
         MFRC522.cpp
         keypad_utilities.cpp
         lcd_utilities.cpp
+        utils.cpp
+        tracker.cpp
 )
 
 target_link_libraries(${APP_TARGET}

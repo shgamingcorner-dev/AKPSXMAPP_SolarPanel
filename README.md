@@ -30,6 +30,26 @@ via the ESP-01, uploading sensor readings to ThingSpeak, and relaying Telegram a
 telemetry/alerts through the [AKPSRELAY](https://github.com/shgamingcorner-dev/AKPSRELAY) Flask
 bridge (see "Architecture" below for why a relay exists at all).
 
+## Code structure
+
+```
+main.cpp            - threads, keypad/RFID/LCD, servo actuation consumers, ESP-01/relay I/O
+tracker.h/.cpp      - solar tracker module: tilt servo (PB_0) + LDR (PA_5),
+                      feedback-agnostic hill-climb (LDR% now; current once the
+                      ACS712 is wired + calibrated). Public API only:
+                      init / tick / get_angle / set_sun_target — all internals static.
+config.h            - every pin, constant, threshold, and credential in one place
+                      (no magic numbers in the .cpp files)
+utils.h/.cpp        - shared helpers (now_ms())
+DHT11.cpp, MFRC522.cpp, keypad_utilities.cpp, lcd_utilities.cpp - peripheral drivers
+```
+
+Design notes: `main.cpp` is the only file that knows about threads. `tracker.cpp` is a
+self-contained module (all state is `static`, public surface is the 4-function API) so it
+could be dropped into another project unchanged. `main.cpp` stays big because it integrates
+every subsystem — a full split into per-device modules is deliberately deferred (see
+"What is still to be done").
+
 ## Architecture
 
 ```

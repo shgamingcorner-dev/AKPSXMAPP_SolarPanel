@@ -12,16 +12,13 @@
 #include "lcd.h"
 #include "keypad.h"
 #include "config.h"
+#include "utils.h"
+#include "tracker.h"
 
 #define BUF      512
 #define RX_BUF   1024
 
-// Helper: replaces deprecated Kernel::get_ms_count() (mbed-os-6.0.0)
-static inline uint64_t now_ms(void)
-{
-    using namespace std::chrono;
-    return duration_cast<milliseconds>(Kernel::Clock::now().time_since_epoch()).count();
-}
+// now_ms() is defined in utils.cpp (shared with tracker.cpp).
 
 static BufferedSerial esp(ESP_TX, ESP_RX, 115200);
 static char *g_tx = nullptr;
@@ -41,7 +38,7 @@ static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
 static DigitalOut led_Red(PB_6);
 static DigitalOut led_Green(PC_1);
-static DigitalOut DHT11VCC(PB_0);
+static DigitalOut DHT11VCC(DHT11VCC_PIN);   // repointed off PB_0 (now the tracker servo)
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 
 // LCD
@@ -612,7 +609,7 @@ static void read_dht11(void)
 static float read_temperature(void) { return g_dht_temperature; }
 static float read_humidity(void)    { return g_dht_humidity; }
 
-static float read_current(void)
+float read_current(void)   // non-static: tracker.cpp uses it via tracker.h
 {
     const int samples = 20;
     float sum = 0.0f;
@@ -1552,6 +1549,9 @@ int main(void)
     // test_door_servo();  // DISABLED after hardware verification (was 6s boot sweep).
                           // Re-enable to re-verify the PA_6 servo end-to-end.
 
+    // Solar tracker: center the tilt servo on PB_0 (TIM3_CH3, default remap)
+    tracker_init();
+
     // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
     // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
     led_mainLighting_pwm.period_ms(10);
@@ -1727,8 +1727,11 @@ int main(void)
             apply_fan(fan_speed_req, fan_power_req);
         }
 
-        // ---- Door lock is applied directly inside poll_device_state_via_relay() ----
-        // (remote-only control; no main-loop consume needed)
+        // ---- Solar tracker hill-climb (non-blocking; LDR feedback now,
+        //      current once the ACS712 is wired + calibrated) ----
+        tracker_tick();
+
+        // ---- Door lock actuation is consumed above (consume_pending_door_actuate) ----
 
         // ---- RFID read every loop iteration (every 10ms) --------
         rfid = read_RFID();

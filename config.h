@@ -75,6 +75,30 @@
 #define DOOR_LOCK_LOCKED       1
 #define DOOR_LOCK_UNLOCKED     0
 
+// Solar Tracker
+#define DHT11VCC_PIN      PB_12     // repointed off PB_0 (hygiene; PB_0 is the tracker servo now)
+#define TRACKER_SERVO_PIN PB_0      // SG90 tilt servo. PB_0 = TIM3_CH3 DEFAULT remap —
+                                    // same remap family as PA_6/PA_7/PB_1 (no AFIO fight).
+                                    // NEVER use PC_8/PC_9 (TIM3 full remap kills door/blind/light).
+#define LDR_PIN           PA_5      // LDR voltage divider -> ADC1_IN5 (SPI1 remapped away, free)
+#define TRACKER_MIN_ANGLE 10
+#define TRACKER_MAX_ANGLE 170
+#define TRACKER_STEP_DEG  5
+#define TRACKER_STEP_MS   2000      // one perturb step every 2s (servo settle + feedback avg)
+
+// Feedback source. LDR is default: the ACS712 is wired but untested/measuring nothing.
+// Switch to CURRENT only after Phase 0.4 (panel wired through sensor + calibration) passes.
+#define TRACKER_FEEDBACK_LDR    1
+#define TRACKER_FEEDBACK_CURRENT 0
+#if TRACKER_FEEDBACK_CURRENT
+#define TRACKER_DEADBAND        0.02f   // amps: ignore deltas < 20mA
+#define TRACKER_CLOUD           0.15f   // amps: below this => cloud/sweep mode
+#else
+#define TRACKER_DEADBAND        2.0f    // LDR %: ignore deltas < 2%
+#define TRACKER_CLOUD           10.0f   // LDR %: below this => dark/cloud -> sweep/park
+#endif
+#define TRACKER_RE_SWEEP_MS 600000      // full re-sweep every 10 min (escape local maxima)
+
 // ACS712 20A Current Sensor
 #define ACS712_SENSITIVITY_V_PER_A  0.060f
 #define ACS712_ZERO_V               1.5f

@@ -374,7 +374,8 @@ if (abs((int)tracker_get_angle() - last_pushed_angle) >= 5) {
 | `config.h` | `DHT11VCC_PIN PB_12`, `TRACKER_SERVO_PIN PB_0`, `LDR_PIN PA_5`, tracker constants |
 | `main.cpp` | DHT11VCC pin (line 44); `tracker_tick()` in main loop; poll parses `tracker_target`; tracker_angle push |
 | `tracker.h` / `tracker.cpp` | NEW: servo, LDR, hill-climb state machine, hybrid logic |
-| `CMakeLists.txt` | add `tracker.cpp` to `target_sources` |
+| `utils.h` / `utils.cpp` | NEW: shared helpers — `now_ms()` moved out of main.cpp so tracker.h doesn't declare main-owned symbols (kept the module boundary one-directional) |
+| `CMakeLists.txt` | add `tracker.cpp` + `utils.cpp` to `target_sources` |
 | `PASTE/relay.py` | solar-target math, `tracker_target` in GET, `tracker_angle` field support (deploy + Reload) |
 | `README.md` | document tracker + keypad/pins |
 | `.hermes/plans/…` (this file) | plan of record |
@@ -399,6 +400,11 @@ if (abs((int)tracker_get_angle() - last_pushed_angle) >= 5) {
 - **Open question:** does the ACS712 measure panel output or house load? (Currently: **neither — it's wired but measuring nothing**; Phase 0.4 wires the panel through it. Until then the LDR is the feedback.)
 - **Open question:** real deployment location lat/lon for `solar_target_angle()` (hardcoded placeholder is Singapore).
 - **Scope:** 1-axis (left/right tilt) only. A 2-axis (adds elevation) tracker is future work — the pin budget for a second servo is currently exhausted.
+
+### Out of scope / deliberately NOT doing (marks-aware)
+
+- **Do NOT split the existing ~1770-line main.cpp (door/blind/fan pipelines) into per-device modules before the demo.** It works; the door/blind system was hard-won this session and a big move can silently break it. The tracker is already the evidence of good structure (self-contained module, 4-function API, all internals static). A working project with one big integration file + one clean module beats a broken-but-pretty one. Revisit only after the demo, with a full hardware test cycle.
+- **Do NOT move `read_current()`/the ACS712 into its own module yet** — it would relocate the AnalogIn + telemetry path (bigger blast radius for a pre-demo change). It stays in main.cpp; tracker.h documents it as "defined in main.cpp".
 
 ---
 
