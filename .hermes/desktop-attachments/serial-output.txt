@@ -1,0 +1,1003 @@
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:24 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:46:21+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:30 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:46:21+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+Temperature: 25 C
+humidity: 74 %
+Current: 14.3 A (pin=2.3V)
+>> AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+[ESP] AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+0,CONNECT
+
+OK
+
+>> AT+CIPSEND=0,139
+[ESP] AT+CIPSEND=0,139
+
+OK
+> 
+[TS] Sending: GET /update?api_key=WFQQ2K9I14E30IE3&field1=25.0&field2=74.0&field3=14.3&field4=0 HTTP/1.1
+Host: api.thingspeak.com
+Connection: close
+
+
+[ESP] 
+Recv 139 bytes
+
+SEND OK
+
++IPD,0,534:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:34 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 4
+Connection: close
+Status: 200 OK
+Cache-Control: max-age=0, private, must-revalidate
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 1800
+X-Request-Id: dd7ab8de-cfe4-47aa-bab3-fa5188c649ea
+Access-Control-Allow-Headers: origin, content-type, X-Requested-With
+Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS, DELETE, PATCH
+ETag: W/"322ac9c5f39fcb8a5cf2d3ad558913ad"
+X-Frame-Options: SAMEORIGIN
+
+28040,CLOSED
+
+[TS] Upload OK
+>> AT+CIPCLOSE=0
+[ESP] AT+CIPCLOSE=0
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+2,CONNECT
+
+OK
+
+>> AT+CIPSEND=2,242
+[ESP] AT+CIPSEND=2,242
+
+OK
+> 
+[SB] Sending telemetry: secret=ab805d0429869cfc507b54bd1921a2ae&temperature=25.0&humidity=74.0&power=14.3&seq=7
+[ESP] 
+Recv 242 bytes
+
+SEND OK
+
++IPD,2,211:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:38 GMT
+Content-Type: application/json
+Content-Length: 20
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"ok":true,"seq":7}
+2,CLOSED
+
+[SB] Telemetry logged OK
+>> AT+CIPCLOSE=2
+[ESP] AT+CIPCLOSE=2
+UNLINK
+
+ERROR
+
+[WARN] One or more sends failed
+
+[DATA]
+  field1  Temperature = 25.0
+  field2  Humidity = 74.0
+  field3  Current = 14.3
+  field4  RFID = 0
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:39 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:46:37+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:47 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:46:37+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+Temperature: 25 C
+humidity: 74 %
+Current: 14.8 A (pin=2.3V)
+>> AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+[ESP] AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+0,CONNECT
+
+>> AT+CIPSEND=0,139
+[ESP] AT+CIPSEND=0,139
+
+OK
+> 
+[TS] Sending: GET /update?api_key=WFQQ2K9I14E30IE3&field1=25.0&field2=74.0&field3=14.8&field4=0 HTTP/1.1
+Host: api.thingspeak.com
+Connection: close
+
+
+[ESP] 
+Recv 139 bytes
+
+SEND OK
+
++IPD,0,534:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:49 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 4
+Connection: close
+Status: 200 OK
+Cache-Control: max-age=0, private, must-revalidate
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 1800
+X-Request-Id: a3b0d1cd-eada-458d-92af-fc4bf8103ffe
+Access-Control-Allow-Headers: origin, content-type, X-Requested-With
+Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS, DELETE, PATCH
+ETag: W/"1be8c0f146e05ecac0004f32da7d28bd"
+X-Frame-Options: SAMEORIGIN
+
+28050,CLOSED
+
+[TS] Upload OK
+>> AT+CIPCLOSE=0
+[ESP] AT+CIPCLOSE=0
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+2,CONNECT
+
+OK
+
+>> AT+CIPSEND=2,242
+[ESP] AT+CIPSEND=2,242
+
+OK
+> 
+[SB] Sending telemetry: secret=ab805d0429869cfc507b54bd1921a2ae&temperature=25.0&humidity=74.0&power=14.8&seq=8
+[ESP] 
+Recv 242 bytes
+
+SEND OK
+
++IPD,2,211:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:52 GMT
+Content-Type: application/json
+Content-Length: 20
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"ok":true,"seq":8}
+2,CLOSED
+[SB] Telemetry logged OK
+>> AT+CIPCLOSE=2
+[ESP] AT+CIPCLOSE=2
+UNLINK
+
+ERROR
+
+[WARN] One or more sends failed
+
+[DATA]
+  field1  Temperature = 25.0
+  field2  Humidity = 74.0
+  field3  Current = 14.8
+  field4  RFID = 0
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:46:55 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:46:52+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:01 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:46:52+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+Temperature: 25 C
+humidity: 73 %
+Current: 14.6 A (pin=2.3V)
+>> AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+[ESP] AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+0,CONNECT
+
+OK
+
+>> AT+CIPSEND=0,139
+[ESP] AT+CIPSEND=0,139
+
+OK
+> 
+[TS] Sending: GET /update?api_key=WFQQ2K9I14E30IE3&field1=25.0&field2=73.0&field3=14.6&field4=0 HTTP/1.1
+Host: api.thingspeak.com
+Connection: close
+
+
+[ESP] 
+Recv 139 bytes
+
+SEND OK
+
++IPD,0,531:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:04 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 1
+Connection: close
+Status: 200 OK
+Cache-Control: max-age=0, private, must-revalidate
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 1800
+X-Request-Id: 1af18254-8163-42a2-a5d1-532676c315b0
+Access-Control-Allow-Headers: origin, content-type, X-Requested-With
+Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS, DELETE, PATCH
+ETag: W/"5feceb66ffc86f38d952786c6d696c79"
+X-Frame-Options: SAMEORIGIN
+
+00,CLOSED
+
+[TS] Upload OK
+>> AT+CIPCLOSE=0
+[ESP] AT+CIPCLOSE=0
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+2,CONNECT
+
+OK
+
+>> AT+CIPSEND=2,242
+[ESP] AT+CIPSEND=2,242
+
+OK
+> 
+[SB] Sending telemetry: secret=ab805d0429869cfc507b54bd1921a2ae&temperature=25.0&humidity=73.0&power=14.6&seq=9
+[ESP] 
+Recv 242 bytes
+
+SEND OK
+
++IPD,2,211:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:06 GMT
+Content-Type: application/json
+Content-Length: 20
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"ok":true,"seq":9}
+2,CLOSED
+
+[SB] Telemetry logged OK
+>> AT+CIPCLOSE=2
+[ESP] AT+CIPCLOSE=2
+UNLINK
+
+ERROR
+
+[WARN] One or more sends failed
+
+[DATA]
+  field1  Temperature = 25.0
+  field2  Humidity = 73.0
+  field3  Current = 14.6
+  field4  RFID = 0
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,440:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:08 GMT
+Content-Type: application/json
+Content-Length: 248
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":false,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:06+00:00"}
+4,CLOSED
+
+=0S] Door poll: relay says LOCK[DS] ED (tapplrue),y_bli locand cal islled  LOCKwith ED (topenrue)
+[
+>> ADS] BT+CIlind:PCLOS settE=4
+ED) pulse [ESP]to 60 AT+C0us IPCLO(CLOSSE=4
+
+UNLINK
+
+ERROR
+
+[DS] blind -> CLOSED
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,440:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:15 GMT
+Content-Type: application/json
+Content-Length: 248
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":false,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:06+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+Temperature: 25 C
+humidity: 74 %
+Current: 14.5 A (pin=2.3V)
+>> AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+[ESP] AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+0,CONNECT
+
+OK
+
+>> AT+CIPSEND=0,139
+[ESP] AT+CIPSEND=0,139
+
+OK
+> 
+[TS] Sending: GET /update?api_key=WFQQ2K9I14E30IE3&field1=25.0&field2=74.0&field3=14.5&field4=0 HTTP/1.1
+Host: api.thingspeak.com
+Connection: close
+
+
+[ESP] 
+Recv 139 bytes
+
+SEND OK
+
++IPD,0,534:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:19 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 4
+Connection: close
+Status: 200 OK
+Cache-Control: max-age=0, private, must-revalidate
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 1800
+X-Request-Id: b74f55a3-98ae-4be8-b045-89393bd653e7
+Access-Control-Allow-Headers: origin, content-type, X-Requested-With
+Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS, DELETE, PATCH
+ETag: W/"23e3ca332c61648a9e8ebb917ceb2f63"
+X-Frame-Options: SAMEORIGIN
+
+28060,CLOSED
+
+[TS] Upload OK
+>> AT+CIPCLOSE=0
+[ESP] AT+CIPCLOSE=0
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+2,CONNECT
+
+OK
+
+>> AT+CIPSEND=2,243
+[ESP] AT+CIPSEND=2,243
+
+OK
+> 
+[SB] Sending telemetry: secret=ab805d0429869cfc507b54bd1921a2ae&temperature=25.0&humidity=74.0&power=14.5&seq=10
+[ESP] 
+Recv 243 bytes
+
+SEND OK
+
++IPD,2,212:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:21 GMT
+Content-Type: application/json
+Content-Length: 21
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"ok":true,"seq":10}
+2,CLOSED
+
+[SB] Telemetry logged OK
+>> AT+CIPCLOSE=2
+[ESP] AT+CIPCLOSE=2
+UNLINK
+
+ERROR
+
+[WARN] One or more sends failed
+
+[DATA]
+  field1  Temperature = 25.0
+  field2  Humidity = 74.0
+  field3  Current = 14.5
+  field4  RFID = 0
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,440:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:23 GMT
+Content-Type: application/json
+Content-Length: 248
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":false,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:21+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,443:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:30 GMT
+Content-Type: application/json
+Content-Length: 251
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:27.213+00:00"}
+4,CLOSED
+
+[DS] Door poll: r[DS]elay  applsays y_bliLOCKnd caED (tlled rue),with loca openl is =1
+ setKDS] BED (tlind:rue)
+>> Ating T+CIPpulseCLOS to 2E=4
+400us[ESP] (OP AT+CEN)
+IPCLOSE=4
+UNLINK
+
+ERROR
+
+[DS] blind -> OPEN
+Temperature: 25 C
+humidity: 74 %
+Current: 15.3 A (pin=2.4V)
+>> AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+[ESP] AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+0,CONNECT
+
+OK
+
+>> AT+CIPSEND=0,139
+[ESP] AT+CIPSEND=0,139
+
+OK
+> 
+[TS] Sending: GET /update?api_key=WFQQ2K9I14E30IE3&field1=25.0&field2=74.0&field3=15.3&field4=0 HTTP/1.1
+Host: api.thingspeak.com
+Connection: close
+
+
+[ESP] 
+Recv 139 bytes
+
+SEND OK
+
++IPD,0,534:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:34 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 4
+Connection: close
+Status: 200 OK
+Cache-Control: max-age=0, private, must-revalidate
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 1800
+X-Request-Id: 8181aab8-f421-4263-9b78-ff334ad3cba7
+Access-Control-Allow-Headers: origin, content-type, X-Requested-With
+Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS, DELETE, PATCH
+ETag: W/"4f4532d3e566afc790a3ebe4056fabed"
+X-Frame-Options: SAMEORIGIN
+
+28070,CLOSED
+
+[TS] Upload OK
+>> AT+CIPCLOSE=0
+[ESP] AT+CIPCLOSE=0
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+2,CONNECT
+
+OK
+
+>> AT+CIPSEND=2,243
+[ESP] AT+CIPSEND=2,243
+
+OK
+> 
+[SB] Sending telemetry: secret=ab805d0429869cfc507b54bd1921a2ae&temperature=25.0&humidity=74.0&power=15.3&seq=11
+[ESP] 
+Recv 243 bytes
+
+SEND OK
+
++IPD,2,212:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:36 GMT
+Content-Type: application/json
+Content-Length: 21
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"ok":true,"seq":11}
+2,CLOSED
+
+[SB] Telemetry logged OK
+>> AT+CIPCLOSE=2
+[ESP] AT+CIPCLOSE=2
+UNLINK
+
+ERROR
+
+[WARN] One or more sends failed
+
+[DATA]
+  field1  Temperature = 25.0
+  field2  Humidity = 74.0
+  field3  Current = 15.3
+  field4  RFID = 0
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,439:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:38 GMT
+Content-Type: application/json
+Content-Length: 247
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":true,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:36+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,444:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:45 GMT
+Content-Type: application/json
+Content-Length: 252
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":false,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:43.396+00:00"}
+4,CLOSED
+
+[DS] Door poll:[DS]  relaapplyy say_blis LOCnd caKED (lled truewith ), loopen=cal i0
+[s LOCDS] BKED (lind:true sett)
+00us  p AT+CulseIPCLO to 6SE=4
+(CLOS[ESP]ED)
+ AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
+[DS] blind -> CLOSED
+Temperature: 25 C
+humidity: 73 %
+Current: 15.0 A (pin=2.4V)
+>> AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+[ESP] AT+CIPSTART=0,"TCP","api.thingspeak.com",80
+0,CONNECT
+
+OK
+
+>> AT+CIPSEND=0,139
+[ESP] AT+CIPSEND=0,139
+
+OK
+> 
+[TS] Sending: GET /update?api_key=WFQQ2K9I14E30IE3&field1=25.0&field2=73.0&field3=15.0&field4=0 HTTP/1.1
+Host: api.thingspeak.com
+Connection: close
+
+
+[ESP] 
+Recv 139 bytes
+
+SEND OK
+
++IPD,0,534:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:49 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 4
+Connection: close
+Status: 200 OK
+Cache-Control: max-age=0, private, must-revalidate
+Access-Control-Allow-Origin: *
+Access-Control-Max-Age: 1800
+X-Request-Id: ebe68450-0974-422c-b218-4d452f2b7b35
+Access-Control-Allow-Headers: origin, content-type, X-Requested-With
+Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS, DELETE, PATCH
+ETag: W/"e0c7bfa5b8e4ae0cecfc1f14093a71e0"
+X-Frame-Options: SAMEORIGIN
+
+28080,CLOSED
+
+[TS] Upload OK
+>> AT+CIPCLOSE=0
+[ESP] AT+CIPCLOSE=0
+UNLINK
+
+ERROR
+
+>> AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=2,"TCP","shgam.pythonanywhere.com",80
+2,CONNECT
+
+OK
+
+>> AT+CIPSEND=2,243
+[ESP] AT+CIPSEND=2,243
+
+OK
+> 
+[SB] Sending telemetry: secret=ab805d0429869cfc507b54bd1921a2ae&temperature=25.0&humidity=73.0&power=15.0&seq=12
+[ESP] 
+Recv 243 bytes
+
+SEND OK
+
++IPD,2,212:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:47:52 GMT
+Content-Type: application/json
+Content-Length: 21
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"ok":true,"seq":12}
+2,CLOSED
+
+[SB] Telemetry logged OK
+>> AT+CIPCLOSE=2
+[ESP] AT+CIPCLOSE=2
+UNLINK
+
+ERROR
+
+[WARN] One or more sends failed
+
+[DATA]
+  field1  Temperature = 25.0
+  field2  Humidity = 73.0
+  field3  Current = 15.0
+  field4  RFID = 0
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+OK
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+[DS] Unexpected response — check relay logs
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+
+busy s...
+
+SEND OK
+
+[WARN] Device state poll failed
+>> AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+[ESP] AT+CIPSTART=4,"TCP","shgam.pythonanywhere.com",80
+4,CONNECT
+
+
+>> AT+CIPSEND=4,121
+[ESP] AT+CIPSEND=4,121
+
+OK
+> 
+[ESP] 
+Recv 121 bytes
+
+SEND OK
+
++IPD,4,440:HTTP/1.1 200 OK
+Date: Sun, 02 Aug 2026 16:48:00 GMT
+Content-Type: application/json
+Content-Length: 248
+Connection: close
+X-Clacks-Overhead: GNU Terry Pratchett
+Server: PythonAnywhere
+
+{"blind":false,"door_locked":false,"fan_power":false,"fan_speed":0,"hvac_power":false,"hvac_target_temp":22,"id":1,"lighting_brightness":28,"main_lighting":false,"security_arm_state":true,"smart_lock":true,"updated_at":"2026-08-02T16:47:51+00:00"}
+4,CLOSED
+
+[DS] Door poll: relay says LOCKED (true), local is LOCKED (true)
+>> AT+CIPCLOSE=4
+[ESP] AT+CIPCLOSE=4
+UNLINK
+
+ERROR
+
