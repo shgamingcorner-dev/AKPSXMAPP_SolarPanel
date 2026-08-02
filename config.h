@@ -41,10 +41,13 @@
 #define MAIN_LIGHT_PIN    PC_9
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PB_7      // SG90 door-lock servo. NOT PC_6: PC_6 is
-                                    // LCD_WR -- PWM on PC_6 hijacks the LCD
-                                    // strobe (pin mux can't serve both).
-                                    // PB_7 = TIM4_CH2, free, no timer collisions.
+#define DOOR_LOCK_PIN     PC_6      // SG90 door-lock servo. PC_6 = TIM3_CH1
+                                    // (full remap) -- same timer AND same remap
+                                    // mode as the PC_9 main light (TIM3_CH4), so
+                                    // both PWM cleanly together. LCD_WR moved to
+                                    // PC_8 (lcd_utilities.cpp) to free this pin.
+                                    // NOT PB_7: TIM4 absent from mbed F1 PWM
+                                    // pinmap -> 0x80010130 at startup (val 0x17).
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)
 
 // Motor / Servo Timings
