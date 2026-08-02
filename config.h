@@ -41,7 +41,7 @@
 #define MAIN_LIGHT_PIN    PC_9
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PC_6      // SG90 door-lock servo. PC_6 = TIM3_CH1
+#define DOOR_LOCK_PIN     PA_3      // SG90 door-lock servo. PC_6 = TIM3_CH1
                                     // (full remap) -- same timer AND same remap
                                     // mode as the PC_9 main light (TIM3_CH4), so
                                     // both PWM cleanly together. LCD_WR moved to
