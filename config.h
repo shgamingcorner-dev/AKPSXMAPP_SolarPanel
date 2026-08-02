@@ -41,7 +41,10 @@
 #define MAIN_LIGHT_PIN    PC_9
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PC_6
+#define DOOR_LOCK_PIN     PB_7      // SG90 door-lock servo. NOT PC_6: PC_6 is
+                                    // LCD_WR -- PWM on PC_6 hijacks the LCD
+                                    // strobe (pin mux can't serve both).
+                                    // PB_7 = TIM4_CH2, free, no timer collisions.
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)
 
 // Motor / Servo Timings
