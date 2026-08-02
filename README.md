@@ -200,6 +200,7 @@ is why it's the current host.
     timeout. Success was impossible. **The better the sensor, the more reliably it failed.**
   - Adding `pin_DHT11.mode(PullUp)`. Harmless and arguably correct, but it changed nothing,
     because the pin being biased was not the pin the sensor was attached to.
+    
 
 ## What is still to be done
 
@@ -244,6 +245,7 @@ is why it's the current host.
 
 1. Connect a USB cable between the USB port on the board and the host computer.
 2. Just use Keil Studio Cloud with the BIN file and build it on the board. Then just run it.
+3. Remember to remove all previous data in telemetry tab on Supabase first.
 
 
 Your PC may take a few minutes to compile your code.
