@@ -1328,7 +1328,7 @@ static bool poll_device_state_via_relay(void)
                door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
                get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
 
-        if (door_locked_state != get_door_locked() || !door_locked_known) {
+        if (!door_locked_known || door_locked_state != last_door_locked) {
             // Grace: if the keypad just toggled the door (and its push may
             // still be in flight over the 3-8s AT link), don't apply a stale
             // remote read on top of it.
