@@ -59,6 +59,7 @@ static uint64_t last_lighting_local_change = 0;
 static uint64_t last_blind_local_change = 0;
 static uint64_t last_fan_local_change = 0;
 static uint64_t last_fan_remote_change = 0;
+static uint64_t last_door_local_change = 0;
 
 static bool confirmed_lighting = false;
 static bool confirmed_blind = false;
@@ -69,6 +70,7 @@ static bool confirmed_door_locked = true;
 static Mutex lighting_timestamp_mutex;
 static Mutex blind_timestamp_mutex;
 static Mutex fan_timestamp_mutex;
+static Mutex door_timestamp_mutex;
 
 static Mutex confirmed_lighting_mutex;
 static Mutex confirmed_blind_mutex;
@@ -311,6 +313,40 @@ static Mutex   fan_actuate_mutex;
 static volatile bool pending_fan_actuate = false;
 static volatile uint8_t pending_fan_speed = 0;
 static volatile bool pending_fan_power = false;
+
+// Door lock: keypad '2' is the ONLY local source. request_door_actuate() is
+// called ONLY from the keypad (never from the poll), so a pending flag means
+// "keypad wants a relay push". last_door_local_change feeds the poll's grace
+// check so a keypad push isn't overwritten by a stale remote read.
+static Mutex   door_actuate_mutex;
+static volatile bool pending_door_actuate = false;
+static volatile bool pending_door_locked = false;
+
+static void request_door_actuate(bool locked)
+{
+    door_actuate_mutex.lock();
+    pending_door_actuate = true;
+    pending_door_locked = locked;
+    door_actuate_mutex.unlock();
+
+    // Stamped ONLY on keypad-initiated changes. The poll reads this to skip
+    // applying a stale remote read while the keypad push is still in flight.
+    door_timestamp_mutex.lock();
+    last_door_local_change = now_ms();
+    door_timestamp_mutex.unlock();
+}
+
+static bool consume_pending_door_actuate(bool *out_locked)
+{
+    door_actuate_mutex.lock();
+    bool v = pending_door_actuate;
+    if (v) {
+        *out_locked = pending_door_locked;
+        pending_door_actuate = false;
+    }
+    door_actuate_mutex.unlock();
+    return v;
+}
 
 static void request_fan_actuate(uint8_t speed, bool power, bool from_remote = false)
 {
@@ -1271,9 +1307,20 @@ static bool poll_device_state_via_relay(void)
                get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
 
         if (door_locked_state != get_door_locked()) {
-            printf("[DS] Applying door state from relay: %s\n",
-                   door_locked_state ? "LOCKED" : "UNLOCKED");
-            apply_door_lock(door_locked_state);
+            // Grace: if the keypad just toggled the door (and its push may
+            // still be in flight over the 3-8s AT link), don't apply a stale
+            // remote read on top of it.
+            door_timestamp_mutex.lock();
+            bool door_recent = (now_ms() - last_door_local_change <= 15000);
+            door_timestamp_mutex.unlock();
+
+            if (!door_recent) {
+                printf("[DS] Applying door state from relay: %s\n",
+                       door_locked_state ? "LOCKED" : "UNLOCKED");
+                apply_door_lock(door_locked_state);
+            } else {
+                printf("[DS] Door poll: local change < 15s ago - not applying remote\n");
+            }
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -1386,10 +1433,22 @@ static void network_task(void)
             }
         }
 
-        // Door lock: remote-only control from Supabase. No local push --
-        // poll_device_state_via_relay() applies remote changes directly.
-        // (The former smart_lock push here caused conflicting writes /
-        // state reverts.)
+        // Door lock: keypad '2' is the ONLY local source of door pushes.
+        // consume_pending_door_actuate fires ONLY when the keypad pressed '2'
+        // (the poll never calls request_door_actuate -- it applies directly
+        // and never pushes). Push smart_lock: the relay aliases it to BOTH
+        // door_locked and smart_lock, keeping the columns in sync.
+        bool door_locked_req;
+        if (consume_pending_door_actuate(&door_locked_req)) {
+            printf("[NET] Door push triggered - pushing smart_lock=%s to relay\n",
+                   door_locked_req ? "true" : "false");
+            if (!send_device_state_via_relay("smart_lock", door_locked_req)) {
+                printf("[WARN] Door lock push failed\n");
+                consecutive_failures++;
+            } else {
+                printf("[NET] Door push successful\n");
+            }
+        }
 
         if (now - last_device_state_poll >= DEVICE_STATE_POLL_MS) {
             last_device_state_poll = now;
@@ -1579,14 +1638,37 @@ int main(void)
                             lcdmessage(Message1, 1);
                             lcdmessage(Message2, 2);
                             break;
-                        case '2':
-                            printf("2 is pressed -- Window not wired up yet\n");
-                            lcdmessage("Window N/A", 1);
+                        case '2': {
+                            printf("2 is pressed -- toggling Door Lock\n");
+
+                            // Debounce: ignore presses within 500ms of the last
+                            // door action (servo takes ~500ms to settle anyway)
+                            door_timestamp_mutex.lock();
+                            bool door_recent_press = (now_ms() - last_door_local_change <= 500);
+                            door_timestamp_mutex.unlock();
+                            if (door_recent_press) {
+                                printf("[DOOR] Debounce - ignoring rapid press\n");
+                                lcdmessage("Door: Busy", 1);
+                                lcdmessage("", 2);
+                                thread_sleep_for(500);
+                                lcdmessage(Message1, 1);
+                                lcdmessage(Message2, 2);
+                                break;
+                            }
+
+                            // Toggle local state + move servo, then request the
+                            // network thread to push the new state to the relay.
+                            bool new_door = !get_door_locked();
+                            apply_door_lock(new_door);
+                            request_door_actuate(new_door);
+
+                            lcdmessage(new_door ? "Door: LOCKED" : "Door: UNLOCKED", 1);
                             lcdmessage("", 2);
                             thread_sleep_for(500);
                             lcdmessage(Message1, 1);
                             lcdmessage(Message2, 2);
                             break;
+                        }
                         case '3':
                             printf("3 is pressed -- toggling Lighting\n");
                             request_lighting_toggle();
