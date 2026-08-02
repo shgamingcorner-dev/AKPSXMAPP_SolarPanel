@@ -1288,8 +1288,18 @@ static bool poll_device_state_via_relay(void)
             send_device_state_int_via_relay("fan_speed", current_speed);
         }
 
-        bool door_locked_state = strstr(g_rx, "\"smart_lock\":true") != NULL
-                              || strstr(g_rx, "\"smart_lock\": true") != NULL;
+        // POLL door_locked, PUSH smart_lock (hybrid, live-verified against relay):
+        //   - The relay returns BOTH fields, and they can drift apart
+        //     (observed: {"door_locked":false,"smart_lock":true}).
+        //   - Polling door_locked accepts changes written to EITHER column:
+        //     the frontend's smart_lock writes are aliased by the relay to
+        //     door_locked too, and manual Supabase edits to door_locked are
+        //     seen directly. Polling smart_lock alone missed manual edits.
+        //   - Pushing smart_lock keeps BOTH columns in sync (POST smart_lock
+        //     updates both); pushing door_locked only updated door_locked and
+        //     was what caused the drift.
+        bool door_locked_state = strstr(g_rx, "\"door_locked\":true") != NULL
+                              || strstr(g_rx, "\"door_locked\": true") != NULL;
 
         // No local keypad control exists for the door -- every change comes
         // from remote. Apply it immediately; the grace-period check is removed
