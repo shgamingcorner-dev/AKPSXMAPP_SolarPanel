@@ -41,13 +41,17 @@
 #define MAIN_LIGHT_PIN    PC_9
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PA_3      // SG90 door-lock servo. PC_6 = TIM3_CH1
-                                    // (full remap) -- same timer AND same remap
-                                    // mode as the PC_9 main light (TIM3_CH4), so
-                                    // both PWM cleanly together. LCD_WR moved to
-                                    // PC_8 (lcd_utilities.cpp) to free this pin.
-                                    // NOT PB_7: TIM4 absent from mbed F1 PWM
-                                    // pinmap -> 0x80010130 at startup (val 0x17).
+#define DOOR_LOCK_PIN     PC_8      // SG90 door-lock servo. PC_8 = TIM3_CH3
+                                    // (AFIO remap 9 = full) -- ACTIVE in
+                                    // NUCLEO_F103RB PeripheralPins.c, same
+                                    // timer/remap as the PC_9 main light.
+                                    // DO NOT use PA_3 (STDIO_UART_RX, excluded
+                                    // from pinmap), PB_7 (TIM4 = us_ticker,
+                                    // excluded), or PC_6 (LCD_WR) -- those die
+                                    // with 0x80010130 or fight the LCD strobe.
+                                    // LCD_WR stays on PC_6 (GPIO -- unaffected
+                                    // by the TIM3 remap, which only applies to
+                                    // pins in alternate-function mode).
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)
 
 // Motor / Servo Timings
