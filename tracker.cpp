@@ -68,6 +68,7 @@ static int8_t    g_dir = 1;             // +1/-1
 static float     g_last_fb = -1.0f;     // last feedback value (LDR% or A)
 static uint64_t  g_last_step = 0;
 static uint64_t  g_last_resweep = 0;
+static bool      g_startup_done = false;   // first-tick startup move (B5)
 
 // Night parking: at night tracker_target is null (-1) and the LDR reads near
 // 0 (< TRACKER_CLOUD). Park the panel at TRACKER_MIN_ANGLE and hold -- the
@@ -84,6 +85,18 @@ static void park_at_min(void)
 void tracker_tick(void)
 {
     uint64_t now = now_ms();
+
+    // Startup (B5): first tick after a short settle -- if the relay already
+    // gave us a sun target, go straight there; otherwise hill-climb from the
+    // centered 90 deg position. Then normal operation takes over.
+    if (!g_startup_done && now >= 3000) {
+        g_startup_done = true;
+        if (g_sun_target >= 0) {
+            servo_to_angle((uint8_t)g_sun_target);
+            g_last_fb = -1.0f;
+            printf("[TRK] startup: sun target %d deg\n", g_sun_target);
+        }
+    }
 
     // Periodic re-sweep: go back to the sun target to escape local maxima.
     if (now - g_last_resweep >= TRACKER_RE_SWEEP_MS) {
