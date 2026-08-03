@@ -75,6 +75,26 @@
 #define DOOR_LOCK_LOCKED       1
 #define DOOR_LOCK_UNLOCKED     0
 
+// Solar Tracker (360° continuous motor on a pulley, time-driven)
+// DHT11VCC repointed to PB_12 (was PB_0) so PB_0 is free for the tracker
+// motor. PB_0 = TIM3_CH3 DEFAULT remap — same family as PA_6/PA_7/PB_1
+// (door/blind/light), no AFIO fight. NEVER use PC_8/PC_9 (TIM3 full remap
+// kills door/blind/light).
+#define DHT11VCC_PIN      PB_12
+#define TRACKER_MOTOR_PIN PB_0      // 360° continuous motor, pulley-driven
+#define LDR_PIN           PA_5      // LDR voltage divider -> ADC1_IN5 (free)
+
+// Phase 1: time-driven pulley cycle (exact Arduino sketch timings)
+#define TRACKER_STOP_DUTY      0.075f   // neutral/stop (1500us equivalent)
+#define TRACKER_FWD_DUTY       0.100f   // full speed one direction
+#define TRACKER_REV_DUTY       0.050f   // full speed other direction
+#define TRACKER_MS_TO_FLAT     2500     // fwd 2.5s -> stop at FLAT (180°)
+#define TRACKER_HOLD_FLAT_MS   30000    // hold flat 30s
+#define TRACKER_MS_FWD_MAX     3000     // fwd 3s -> stop at ~315/135
+#define TRACKER_HOLD_MAX_MS    3000     // hold 3s
+#define TRACKER_MS_RETURN      3600     // rev 3.6s -> back to ~225/60
+#define TRACKER_HOLD_HOME_MS   1000     // hold 1s
+
 // ACS712 20A Current Sensor
 #define ACS712_SENSITIVITY_V_PER_A  0.060f
 #define ACS712_ZERO_V               1.5f

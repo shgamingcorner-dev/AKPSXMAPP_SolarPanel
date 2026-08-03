@@ -12,6 +12,7 @@
 #include "lcd.h"
 #include "keypad.h"
 #include "config.h"
+#include "tracker.h"
 
 #define BUF      512
 #define RX_BUF   1024
@@ -41,7 +42,7 @@ static DigitalOut led_rx(PB_15);
 static DigitalOut led_Blue(PC_0);
 static DigitalOut led_Red(PB_6);
 static DigitalOut led_Green(PC_1);
-static DigitalOut DHT11VCC(PB_0);
+static DigitalOut DHT11VCC(DHT11VCC_PIN);   // repointed off PB_0 (now the tracker motor)
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 
 // LCD
@@ -1552,6 +1553,10 @@ int main(void)
     // test_door_servo();  // DISABLED after hardware verification (was 6s boot sweep).
                           // Re-enable to re-verify the PA_6 servo end-to-end.
 
+    // Solar tracker: 360° continuous motor on PB_0 (TIM3_CH3, default remap).
+    // Time-driven pulley cycle (Phase 1); LDR hill-climb comes later (Phase 2).
+    tracker_init();
+
     // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
     // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
     led_mainLighting_pwm.period_ms(10);
@@ -1755,6 +1760,9 @@ int main(void)
             led_Blue = 0;
             led_Red  = 1;
         }
+
+        // ---- Solar tracker: non-blocking time-driven pulley cycle ----
+        tracker_tick();
 
         thread_sleep_for(10);
     }
