@@ -8,3 +8,4 @@ compile_commands.json
 .cache
 mbed-os
 .claude/worktrees/agent-a21b21674aff3615
+.claude/worktrees/
