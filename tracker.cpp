@@ -243,8 +243,16 @@ void tracker_tick(void)
             break;
         case TRK_HOLD_BEST:
             if (elapsed >= TRACKER_HOLD_BEST_MS) {
-                printf("[TRK] hold done, re-sweeping\n");
-                begin_sweep();
+                if (tracker_is_dark()) {
+                    // Night fell during the hold: don't waste a sweep in the
+                    // dark. Stay parked at home and re-check next cycle.
+                    printf("[TRK] hold done, but DO=dark: staying parked\n");
+                    g_best_pos = 0;
+                    start_phase(TRK_RETURN_TO_BEST);   // go home, then hold
+                } else {
+                    printf("[TRK] hold done, re-sweeping\n");
+                    begin_sweep();
+                }
             }
             break;
         default:
