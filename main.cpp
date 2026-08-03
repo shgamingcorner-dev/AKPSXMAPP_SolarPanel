@@ -443,6 +443,20 @@ static bool consume_pending_fan_actuate(uint8_t *out_speed, bool *out_power)
     return v;
 }
 
+// Single source of truth for fan duty mapping (0.05 = full reverse,
+// 0.075 = neutral/stop, 0.10 = full forward).
+// speed == 0  -> OFF (neutral 0.075), regardless of the power flag.
+//               (Previously speed==0 mapped to 0.050 = FULL REVERSE, so a
+//               remote fan_speed:0 + fan_power:true spun the fan backward.)
+static float fan_duty_for(uint8_t speed)
+{
+    if (speed == 0) return 0.075f;          // OFF / neutral
+    float duty = 0.050f + (speed * 0.0005f); // speed 1..100 -> 0.0505..0.10
+    if (duty < 0.05f)  duty = 0.05f;
+    if (duty > 0.10f)  duty = 0.10f;
+    return duty;
+}
+
 static void set_fan_speed(uint8_t speed)
 {
     fan_mutex.lock();
@@ -450,10 +464,7 @@ static void set_fan_speed(uint8_t speed)
     fan_mutex.unlock();
 
     if (fan_power) {
-        // Convert speed (0-100) to duty cycle (0.05 to 0.10 for most servos)
-        // 0.075 = neutral (stop), 0.05 = full reverse, 0.10 = full forward
-        float duty = 0.075f + (speed - 50) * 0.0005f;
-        fanServo.write(duty);
+        fanServo.write(fan_duty_for(speed));
     }
 }
 
@@ -1210,15 +1221,11 @@ static void apply_fan(uint8_t speed, bool on)
     fan_power = final_power;
     fan_mutex.unlock();
 
-    // CONTROL THE SERVO USING PWM write() INSTEAD OF pulsewidth_us()
+    // CONTROL THE SERVO USING PWM write() INSTEAD OF pulsewidth_us().
+    // Single mapping (fan_duty_for): speed==0 -> neutral 0.075 (OFF);
+    // 0.05 = full reverse, 0.075 = stop, 0.10 = full forward.
     if (final_power && final_speed > 0) {
-        // Convert speed (0-100) to duty cycle
-        // For most servos: 0.05 = full reverse, 0.075 = stop, 0.10 = full forward
-        // Map speed 0-100 to duty cycle 0.05-0.10
-        float duty = 0.050f + (final_speed * 0.0005f);
-        // Clamp to safe range
-        if (duty < 0.05f) duty = 0.05f;
-        if (duty > 0.10f) duty = 0.10f;
+        float duty = fan_duty_for(final_speed);
         fanServo.write(duty);
         printf("Fan ON - speed:%u%%, duty:%.3f\n", final_speed, duty);
     } else {
