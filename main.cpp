@@ -42,13 +42,11 @@ static DigitalOut DHT11VCC(DHT11VCC_PIN);   // repointed off PB_0 (now the track
 static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 
 // LCD
-unsigned char key2, outChar, outChar2, outChar3;
-unsigned char passWord[] = {'0', '0', '0', '0'};
+unsigned char outChar, outChar2;
 char MessageLocked [ ] = "Door Locked              ";
 char MessageLocked2 [ ] = "Tagg RFID               ";
 char Message1 [ ] = "1.Blind 2.Window              ";
 char Message2 [ ] = "3.Lighting 4.Fans             ";
-char Message3 [ ] = "Invalid try again             ";
 char FanspeedM [ ] = "1:Low 2:Med                  ";
 char FanspeedM2 [ ] = "3:High 4:Off                ";
 
@@ -58,21 +56,10 @@ static uint64_t last_fan_local_change = 0;
 static uint64_t last_fan_remote_change = 0;
 static uint64_t last_door_local_change = 0;
 
-static bool confirmed_lighting = false;
-static bool confirmed_blind = false;
-static uint8_t confirmed_fan_speed = 0;
-static bool confirmed_fan_power = false;
-static bool confirmed_door_locked = true;
-
 static Mutex lighting_timestamp_mutex;
 static Mutex blind_timestamp_mutex;
 static Mutex fan_timestamp_mutex;
 static Mutex door_timestamp_mutex;
-
-static Mutex confirmed_lighting_mutex;
-static Mutex confirmed_blind_mutex;
-static Mutex confirmed_fan_mutex;
-static Mutex confirmed_door_mutex;
 
 DHT11 dht11(DHT11_PIN);
 
@@ -133,16 +120,6 @@ static bool is_keypad_unlocked(void)
     }
     auth_mutex.unlock();
     return unlocked;
-}
-
-static uint64_t get_auth_remaining_ms(void)
-{
-    auth_mutex.lock();
-    uint64_t expiry = g_auth_expiry_time;
-    auth_mutex.unlock();
-    uint64_t now = now_ms();
-    if (expiry > now) return expiry - now;
-    return 0;
 }
 
 // ============================================================
@@ -259,14 +236,6 @@ static void set_main_lighting(bool on)
     } else {
         led_mainLighting_pwm.write(0.0f);
     }
-}
-
-static bool get_main_lighting(void)
-{
-    brightness_mutex.lock();
-    bool on = (g_brightness > 0);
-    brightness_mutex.unlock();
-    return on;
 }
 
 
@@ -466,35 +435,6 @@ static void set_fan_speed(uint8_t speed)
     if (fan_power) {
         fanServo.write(fan_duty_for(speed));
     }
-}
-
-static void set_fan_power(bool on)
-{
-    fan_mutex.lock();
-    fan_power = on;
-    fan_mutex.unlock();
-
-    if (on) {
-        set_fan_speed(fan_speed);
-    } else {
-        // OFF = neutral position (stop)
-        fanServo.write(0.075f);  // 7.5% duty cycle = neutral for most servos
-    }
-}
-
-static void set_door_lock(bool locked)
-{
-    printf("[DOOR] set_door_lock called with locked=%d\n", locked);
-
-    door_mutex.lock();
-    door_locked = locked;
-    door_mutex.unlock();
-
-    // SG90 servo control with pulse widths
-    uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
-    printf("[DOOR] Setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
-    doorLock.pulsewidth_us(pulse);
-    thread_sleep_for(500);  // Wait for movement
 }
 
 // Diagnostic sweep: verifies the PA_6 door servo hardware end-to-end.
@@ -1072,26 +1012,6 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[DS] Push OK\n" : "[DS] Unexpected response — check relay logs\n");
-
-    if (ok) {
-        if (strcmp(field, "main_lighting") == 0) {
-            confirmed_lighting_mutex.lock();
-            confirmed_lighting = value;
-            confirmed_lighting_mutex.unlock();
-        } else if (strcmp(field, "blind") == 0) {
-            confirmed_blind_mutex.lock();
-            confirmed_blind = value;
-            confirmed_blind_mutex.unlock();
-        } else if (strcmp(field, "fan_power") == 0) {
-            confirmed_fan_mutex.lock();
-            confirmed_fan_power = value;
-            confirmed_fan_mutex.unlock();
-        } else if (strcmp(field, "door_locked") == 0) {
-            confirmed_door_mutex.lock();
-            confirmed_door_locked = value;
-            confirmed_door_mutex.unlock();
-        }
-    }
 
     at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
     return ok;
