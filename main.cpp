@@ -295,6 +295,54 @@ static Mutex   device_state_mutex;
 static volatile bool pending_blind_toggle = false;
 static volatile bool pending_lighting_toggle = false;
 
+// Sensor reads (DHT11 500ms warm-up + ACS712 20x100us busy-samples) used to
+// run inline on network_thread, blocking ALL AT traffic up to ~1.5-2s per
+// send cycle (a keypad press could sit unprocessed that long). The network
+// thread now requests a read and the MAIN loop samples the sensors, so the
+// blocking never touches the ESP-01 link. Cadence is unchanged (main loop
+// runs every ~10ms; the request is only set every SEND_INTERVAL_MS).
+static Mutex   sensor_mutex;
+static volatile bool sensor_read_requested = false;
+static volatile bool sensor_data_ready = false;
+static volatile int  sensor_temperature = 2634;
+static volatile int  sensor_humidity = 4001;
+static volatile float sensor_current = 0.0f;
+
+static void request_sensor_read(void)
+{
+    sensor_mutex.lock();
+    sensor_read_requested = true;
+    sensor_mutex.unlock();
+}
+
+static bool consume_sensor_read_request(void)
+{
+    sensor_mutex.lock();
+    bool v = sensor_read_requested;
+    sensor_read_requested = false;
+    sensor_mutex.unlock();
+    return v;
+}
+
+static void store_sensor_results(int temperature, int humidity, float current)
+{
+    sensor_mutex.lock();
+    sensor_temperature = temperature;
+    sensor_humidity = humidity;
+    sensor_current = current;
+    sensor_data_ready = true;
+    sensor_mutex.unlock();
+}
+
+static void get_sensor_results(int *out_temperature, int *out_humidity, float *out_current)
+{
+    sensor_mutex.lock();
+    *out_temperature = sensor_temperature;
+    *out_humidity = sensor_humidity;
+    *out_current = sensor_current;
+    sensor_mutex.unlock();
+}
+
 static Mutex   blind_actuate_mutex;
 static volatile bool pending_blind_actuate = false;
 static volatile bool pending_blind_open = false;
@@ -1486,10 +1534,14 @@ static void network_task(void)
         if (now - last_send >= SEND_INTERVAL_MS) {
             last_send = now;
 
-            read_dht11();
-            float temperature = read_temperature();
-            float humidity    = read_humidity();
-            float current     = read_current();
+            // Sensor reads moved OFF this thread: the DHT11 (500ms warm-up)
+            // and the ACS712 (20x100us busy-sample) used to block every AT
+            // exchange here for ~1.5-2s. Now we request a read and the MAIN
+            // loop samples the sensors; the results are consumed below.
+            request_sensor_read();
+            int   temperature = 2634, humidity = 4001;
+            float current = 0.0f;
+            get_sensor_results(&temperature, &humidity, &current);
             int   rfid        = get_latest_rfid();
 
             fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
@@ -1575,6 +1627,11 @@ int main(void)
         printf("[ERROR] Heap allocation failed for buffers\n");
         while (1) thread_sleep_for(1000);
     }
+
+    // Initial sensor sample (main thread, before the network thread starts):
+    // so the first upload ~15s later already has real DHT11/ACS712 values.
+    read_dht11();
+    store_sensor_results(read_temperature(), read_humidity(), read_current());
 
     networkThread.start(network_task);
 
@@ -1725,6 +1782,19 @@ int main(void)
         bool fan_power_req;
         if (consume_pending_fan_actuate(&fan_speed_req, &fan_power_req)) {
             apply_fan(fan_speed_req, fan_power_req);
+        }
+
+        // ---- Consume pending sensor read request (DHT11 + ACS712 sample).
+        // Runs here on the MAIN thread so the network thread's AT traffic is
+        // never blocked by the 500ms DHT11 warm-up or the ACS712 busy-samples.
+        // Only one sample per SEND_INTERVAL_MS is ever outstanding; the
+        // network thread reads the last stored result at send time.
+        if (consume_sensor_read_request()) {
+            read_dht11();
+            int   temperature = read_temperature();
+            int   humidity    = read_humidity();
+            float current     = read_current();
+            store_sensor_results(temperature, humidity, current);
         }
 
         // ---- Solar tracker hill-climb (non-blocking; LDR feedback now,
