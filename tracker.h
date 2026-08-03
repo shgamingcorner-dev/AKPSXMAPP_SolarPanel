@@ -4,7 +4,7 @@
  * The motor is a 360° continuous servo driven by PWM duty
  * (0.075 = stop, 0.100 = full fwd, 0.050 = full rev) — same class as the
  * fan servo. PB_0 = TIM3_CH3 DEFAULT remap, same family as PA_6/PA_7/PB_1.
- * LDR on PA_5 (ADC1_IN5, free).
+ * LDR on PA_4 (ADC1_IN4, free; module DO on PD_2).
  *
  * Mode 1 — SWEEP (time-driven pulley cycle, mirrors the Arduino sketch):
  *     fwd 2.5s -> stop at FLAT (180°) -> hold 30s
@@ -37,5 +37,6 @@ void    tracker_tick(void);        // non-blocking, call from main loop
 bool    tracker_is_moving(void);   // true while the motor is spinning
 uint8_t tracker_get_phase(void);   // debug: current phase index
 float   tracker_get_best_ldr(void);   // debug: highest LDR seen this sweep
+bool    tracker_is_dark(void);     // LDR module DO: true = dark (tutorial)
 
 #endif // TRACKER_H

@@ -82,7 +82,14 @@
 // kills door/blind/light).
 #define DHT11VCC_PIN      PB_12
 #define TRACKER_MOTOR_PIN PB_0      // 360° continuous motor, pulley-driven
-#define LDR_PIN           PA_5      // LDR voltage divider -> ADC1_IN5 (free)
+// LDR light sensor module (per "How to use LDR Sensor Module" tutorial):
+//   AO (analog out) -> PA_4 = ADC1_IN4 (free). NOT PA_0 -- PA_0 is the
+//   ACS712 current sensor (existing telemetry, keep untouched). PA_4 is
+//   electrically identical (same ADC1, 0..3.3V -> read() 0.0..1.0).
+//   DO (digital out, module comparator) -> PD_2 (free).
+//   VCC -> 3.3V, GND -> GND.
+#define LDR_PIN           PA_4
+#define LDR_DO_PIN        PD_2
 
 // Phase 1: time-driven pulley cycle (exact Arduino sketch timings)
 #define TRACKER_STOP_DUTY      0.075f   // neutral/stop (1500us equivalent)

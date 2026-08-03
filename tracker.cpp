@@ -5,7 +5,7 @@
  * family as the PA_6 door, PA_7 blind, and PB_1 light. NEVER PC_8/PC_9
  * (TIM3 full remap reroutes every TIM3 channel and kills door/blind/light).
  * DHT11VCC was repointed to PB_12 (config.h) to free PB_0.
- * LDR on LDR_PIN (PA_5) = ADC1_IN5.
+ * LDR on LDR_PIN (PA_4, ADC1_IN4) + module DO on LDR_DO_PIN (PD_2).
  *
  * SWEEP phases (identical to the Arduino sketch):
  *   0: FWD  to FLAT   (TRACKER_MS_TO_FLAT)      -> stop, hold flat
@@ -34,6 +34,7 @@
 
 static PwmOut   trackerMotor(TRACKER_MOTOR_PIN);
 static AnalogIn ldr(LDR_PIN);
+static DigitalIn ldrDo(LDR_DO_PIN);   // module DO: 1 = dark, 0 = light (tutorial)
 
 // millisecond clock (replaces deprecated Kernel::get_ms_count on mbed 6)
 static uint64_t now_ms(void)
@@ -73,6 +74,12 @@ static float read_ldr_pct(void)
         sum += ldr.read();               // 0.0..1.0
     }
     return (sum / TRACKER_LDR_AVG_SAMPLES) * 100.0f;   // 0..100%
+}
+
+// Module DO comparator output: 1 = dark, 0 = light (per tutorial sample code)
+bool tracker_is_dark(void)
+{
+    return ldrDo.read() == 1;
 }
 
 static void motor_stop(void)
@@ -165,7 +172,7 @@ void tracker_init(void)
 {
     trackerMotor.period_ms(PERIOD_WIDTH);   // 50Hz, same as fan/door servos
     begin_sweep();
-    printf("[TRK] tracker init: 360 motor PB_0 + LDR PA_5, LDR sweep-and-hold\n");
+    printf("[TRK] tracker init: 360 motor PB_0 + LDR PA_4, LDR sweep-and-hold\n");
 }
 
 bool tracker_is_moving(void) { return g_moving; }
@@ -205,14 +212,15 @@ void tracker_tick(void)
             sample_ldr();
             if (elapsed >= TRACKER_HOLD_HOME_MS) {
                 // Sweep complete: pick the best angle or park at night.
-                printf("[TRK] sweep done: best LDR %.1f%% at pos %ld\n",
-                       g_best_ldr, (long)g_best_pos);
-                if (g_best_ldr >= TRACKER_LDR_FLOOR) {
+                printf("[TRK] sweep done: best LDR %.1f%% at pos %ld, DO=%s\n",
+                       g_best_ldr, (long)g_best_pos,
+                       tracker_is_dark() ? "dark" : "light");
+                if (g_best_ldr >= TRACKER_LDR_FLOOR && !tracker_is_dark()) {
                     start_phase(TRK_RETURN_TO_BEST);
                 } else {
                     // Night/dark: no useful LDR peak. Drive back to the home
                     // position (pos 0) and wait there until daylight.
-                    printf("[TRK] dark (%.1f < floor %.1f): returning home\n",
+                    printf("[TRK] dark (LDR %.1f < floor %.1f): returning home\n",
                            g_best_ldr, TRACKER_LDR_FLOOR);
                     g_best_pos = 0;
                     start_phase(TRK_RETURN_TO_BEST);
