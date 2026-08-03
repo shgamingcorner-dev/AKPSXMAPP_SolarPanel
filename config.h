@@ -95,6 +95,15 @@
 #define TRACKER_MS_RETURN      3600     // rev 3.6s -> back to ~225/60
 #define TRACKER_HOLD_HOME_MS   1000     // hold 1s
 
+// Phase 2: LDR sweep-and-hold. While the sweep runs (moving AND at the
+// stops) the LDR is sampled every TRACKER_LDR_SAMPLE_MS; the highest reading
+// and its motor position are remembered. When the sweep finishes, the motor
+// returns to that position and holds for TRACKER_HOLD_BEST_MS, then re-sweeps.
+#define TRACKER_LDR_SAMPLE_MS   100     // LDR sample interval during sweep
+#define TRACKER_LDR_AVG_SAMPLES 10      // ADC samples averaged per LDR read
+#define TRACKER_LDR_FLOOR       5.0f    // below this = dark/night -> park at home
+#define TRACKER_HOLD_BEST_MS    900000  // hold best-LDR angle 15 minutes
+
 // ACS712 20A Current Sensor
 #define ACS712_SENSITIVITY_V_PER_A  0.060f
 #define ACS712_ZERO_V               1.5f
