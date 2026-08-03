@@ -2,6 +2,21 @@
 #define CONFIG_H
 
 // ============================================================
+// Debug printf gating
+// ============================================================
+// DEBUG 0 = production: clean serial (no per-poll [DS]/[TRK]/[ESP] spam,
+// no per-actuation fan-apply internals). Critical errors ([WARN]/[ERROR]),
+// security events ([RFID]/[AUTH]), telemetry (Temperature/Current/[DATA])
+// and keypad state changes stay visible in both modes.
+// DEBUG 1 = verbose: everything prints (including the noisy per-cycle lines).
+#define DEBUG 0
+#if DEBUG
+#define DBG_PRINTF(...) printf(__VA_ARGS__)
+#else
+#define DBG_PRINTF(...) ((void)0)
+#endif
+
+// ============================================================
 // Hardware Configuration
 // ============================================================
 

@@ -697,14 +697,14 @@ static int esp_read(int wait_ms = 1000, const char *stop1 = NULL, const char *st
       if (n > 0) {
           g_rx[n] = '\0';
           led_rx = !led_rx;
-          printf("[ESP] %s\n", g_rx);
+          DBG_PRINTF("[ESP] %s\n", g_rx);
       }
       return n;
   }
 
 static int at(const char *cmd, int wait_ms = 1000, const char *stop1 = NULL, const char *stop2 = NULL)
 {
-    printf(">> %s", cmd);
+    DBG_PRINTF(">> %s", cmd);
     esp_send(cmd);
     return esp_read(wait_ms, stop1, stop2);
 }
@@ -794,7 +794,7 @@ static bool send_to_thingspeak(void)
         }
     }
 
-    printf("[TS] Sending: %s\n", query);
+    DBG_PRINTF("[TS] Sending: %s\n", query);
     esp_send(query);
     if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR");
@@ -840,7 +840,7 @@ static bool send_telegram_via_relay(const char *message)
         }
     }
 
-    printf("[TG] Sending: %s\n", query);
+    DBG_PRINTF("[TG] Sending: %s\n", query);
     esp_send(query);
     if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR");
@@ -904,7 +904,7 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
         }
     }
 
-    printf("[SB] Sending telemetry: %s\n", body);
+    DBG_PRINTF("[SB] Sending telemetry: %s\n", body);
     esp_send(query);
     if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=2\r\n", 500, "OK", "ERROR");
@@ -954,7 +954,7 @@ static bool send_alert_log_via_relay(const char *level, const char *message, con
         }
     }
 
-    printf("[SB] Sending alert: %s\n", body);
+    DBG_PRINTF("[SB] Sending alert: %s\n", body);
     esp_send(query);
     if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=3\r\n", 500, "OK", "ERROR");
@@ -1003,7 +1003,7 @@ static bool send_device_state_via_relay(const char *field, bool value)
         }
     }
 
-    printf("[DS] Pushing %s=%s\n", field, value ? "true" : "false");
+    DBG_PRINTF("[DS] Pushing %s=%s\n", field, value ? "true" : "false");
     esp_send(query);
     if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
@@ -1051,7 +1051,7 @@ static bool send_device_state_int_via_relay(const char *field, int value)
         }
     }
 
-    printf("[DS] Pushing %s=%d\n", field, value);
+    DBG_PRINTF("[DS] Pushing %s=%d\n", field, value);
     esp_send(query);
     if (esp_read(3000, "CLOSED") <= 0) {
         at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
@@ -1084,30 +1084,30 @@ static void apply_main_lighting(bool on)
     }
     last_main_lighting = on;
     main_lighting_known = true;
-    printf("[DS] mainLighting -> %s\n", on ? "ON" : "OFF");
+    DBG_PRINTF("[DS] mainLighting -> %s\n", on ? "ON" : "OFF");
 }
 
 static void apply_blind(bool open)
 {
-    printf("[DS] apply_blind called with open=%d\n", open);
+    DBG_PRINTF("[DS] apply_blind called with open=%d\n", open);
 
     // Direct servo control with correct SG90 pulse values:
     // OPEN = 180° (2400us), CLOSED = 0° (600us)
     uint16_t pulse = open ? PULSE_WIDTH_180_DEGREE : PULSE_WIDTH_0_DEGREE;
-    printf("[DS] Blind: setting pulse to %dus (%s)\n", pulse, open ? "OPEN" : "CLOSED");
+    DBG_PRINTF("[DS] Blind: setting pulse to %dus (%s)\n", pulse, open ? "OPEN" : "CLOSED");
 
     motor.pulsewidth_us(pulse);
     thread_sleep_for(1000);  // Wait for movement
 
     last_blind_open = open;
     blind_known = true;
-    printf("[DS] blind -> %s\n", open ? "OPEN" : "CLOSED");
+    DBG_PRINTF("[DS] blind -> %s\n", open ? "OPEN" : "CLOSED");
 }
 
 static void apply_fan(uint8_t speed, bool on)
 {
-    printf("\n=== FAN APPLY ===\n");
-    printf("Requested: speed=%u, on=%d\n", speed, on);
+    DBG_PRINTF("\n=== FAN APPLY ===\n");
+    DBG_PRINTF("Requested: speed=%u, on=%d\n", speed, on);
     
     // Get timestamps to determine which is most recent
     fan_timestamp_mutex.lock();
@@ -1116,7 +1116,7 @@ static void apply_fan(uint8_t speed, bool on)
     fan_timestamp_mutex.unlock();
     
     bool remote_is_newer = (remote_time > local_time);
-    printf("local_time=%llu, remote_time=%llu, remote_is_newer=%d\n", local_time, remote_time, remote_is_newer);
+    DBG_PRINTF("local_time=%llu, remote_time=%llu, remote_is_newer=%d\n", local_time, remote_time, remote_is_newer);
     
     uint8_t final_speed;
     bool final_power;
@@ -1124,16 +1124,16 @@ static void apply_fan(uint8_t speed, bool on)
     if (remote_is_newer) {
         final_speed = speed;
         final_power = on;
-        printf("Using REMOTE state\n");
+        DBG_PRINTF("Using REMOTE state\n");
     } else {
         fan_mutex.lock();
         final_speed = fan_speed;
         final_power = fan_power;
         fan_mutex.unlock();
-        printf("Keeping LOCAL state\n");
+        DBG_PRINTF("Keeping LOCAL state\n");
     }
     
-    printf("Final: speed=%u, on=%d\n", final_speed, final_power);
+    DBG_PRINTF("Final: speed=%u, on=%d\n", final_speed, final_power);
     
     // Update state
     fan_mutex.lock();
@@ -1147,14 +1147,14 @@ static void apply_fan(uint8_t speed, bool on)
     if (final_power && final_speed > 0) {
         float duty = fan_duty_for(final_speed);
         fanServo.write(duty);
-        printf("Fan ON - speed:%u%%, duty:%.3f\n", final_speed, duty);
+        DBG_PRINTF("Fan ON - speed:%u%%, duty:%.3f\n", final_speed, duty);
     } else {
         // OFF - send neutral (stop)
         fanServo.write(0.075f);  // 7.5% duty cycle = neutral/stop for most servos
-        printf("Fan OFF - neutral duty:0.075\n");
+        DBG_PRINTF("Fan OFF - neutral duty:0.075\n");
     }
     
-    printf("=== END FAN APPLY ===\n\n");
+    DBG_PRINTF("=== END FAN APPLY ===\n\n");
     
     last_fan_speed = final_speed;
     last_fan_power = final_power;
@@ -1162,7 +1162,7 @@ static void apply_fan(uint8_t speed, bool on)
 
 static void apply_door_lock(bool locked)
 {
-    printf("[DS] apply_door_lock called with locked=%d\n", locked);
+    DBG_PRINTF("[DS] apply_door_lock called with locked=%d\n", locked);
 
     door_mutex.lock();
     door_locked = locked;
@@ -1171,13 +1171,13 @@ static void apply_door_lock(bool locked)
     // Direct servo control with correct SG90 pulse values:
     // LOCKED = 0° (600us), UNLOCKED = 180° (2400us)
     uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
-    printf("[DS] Door: setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
+    DBG_PRINTF("[DS] Door: setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
     doorLock.pulsewidth_us(pulse);
     thread_sleep_for(500);  // Wait for movement
 
     last_door_locked = locked;
     door_locked_known = true;
-    printf("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
+    DBG_PRINTF("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
 }
 
 static bool poll_device_state_via_relay(void)
@@ -1236,7 +1236,7 @@ static bool poll_device_state_via_relay(void)
                 }
                 apply_main_lighting(main_lighting);
             } else {
-                printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\n");
+                DBG_PRINTF("[DS] Ignoring remote main_lighting (local change < 15s ago)\n");
             }
         }
 
@@ -1251,7 +1251,7 @@ static bool poll_device_state_via_relay(void)
             if (!blind_recent) {
                 request_blind_actuate(blind);
             } else {
-                printf("[DS] Ignoring remote blind (local change < 15s ago)\n");
+                DBG_PRINTF("[DS] Ignoring remote blind (local change < 15s ago)\n");
             }
         }
 
@@ -1278,10 +1278,10 @@ static bool poll_device_state_via_relay(void)
             fan_timestamp_mutex.unlock();
             
             request_fan_actuate(fan_speed_state, fan_power_state, true);
-            printf("[DS] Applied remote fan state: %s, %u%%\n", 
+            DBG_PRINTF("[DS] Applied remote fan state: %s, %u%%\n", 
                    fan_power_state ? "ON" : "OFF", fan_speed_state);
         } else if (local_recent && (fan_power_state != current_power || fan_speed_state != current_speed)) {
-            printf("[DS] Local fan change recent - pushing local state to relay\n");
+            DBG_PRINTF("[DS] Local fan change recent - pushing local state to relay\n");
             send_device_state_via_relay("fan_power", current_power);
             send_device_state_int_via_relay("fan_speed", current_speed);
         }
@@ -1296,7 +1296,7 @@ static bool poll_device_state_via_relay(void)
         bool door_locked_state = strstr(g_rx, "\"door_locked\":true") != NULL
                               || strstr(g_rx, "\"door_locked\": true") != NULL;
 
-        printf("[DS] Door poll: relay says %s, local is %s\n",
+        DBG_PRINTF("[DS] Door poll: relay says %s, local is %s\n",
                door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
                get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
 
@@ -1309,11 +1309,11 @@ static bool poll_device_state_via_relay(void)
             door_timestamp_mutex.unlock();
 
             if (!door_recent) {
-                printf("[DS] Applying door state from relay: %s\n",
+                DBG_PRINTF("[DS] Applying door state from relay: %s\n",
                        door_locked_state ? "LOCKED" : "UNLOCKED");
                 request_door_actuate(door_locked_state);
             } else {
-                printf("[DS] Door poll: local change < 15s ago - not applying remote\n");
+                DBG_PRINTF("[DS] Door poll: local change < 15s ago - not applying remote\n");
             }
         }
     } else {

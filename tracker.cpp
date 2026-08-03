@@ -94,7 +94,7 @@ void tracker_tick(void)
         if (g_sun_target >= 0) servo_to_angle((uint8_t)g_sun_target);
         g_last_fb = -1.0f;
         g_state = TRK_SWEEPING;
-        printf("[TRK] low feedback %.1f -> sweep to %d\n", fb, g_sun_target);
+        DBG_PRINTF("[TRK] low feedback %.1f -> sweep to %d\n", fb, g_sun_target);
         return;
     }
 
@@ -113,5 +113,5 @@ void tracker_tick(void)
     else                                 { g_state = TRK_HOLD; return; }  // deadband: stop
 
     servo_to_angle(g_angle + g_dir * TRACKER_STEP_DEG);
-    printf("[TRK] angle=%d fb=%.1f d=%.2f dir=%+d\n", g_angle, fb, delta, g_dir);
+    DBG_PRINTF("[TRK] angle=%d fb=%.1f d=%.2f dir=%+d\n", g_angle, fb, delta, g_dir);
 }
