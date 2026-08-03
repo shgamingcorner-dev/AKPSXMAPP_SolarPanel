@@ -61,13 +61,25 @@ uint8_t tracker_get_angle(void) { return g_angle; }
 void    tracker_set_sun_target(int a) { g_sun_target = a; }
 
 // --- Hill-climb state machine ---------------------------------------------
-enum TrkState { TRK_TRACKING, TRK_SWEEPING, TRK_HOLD };
+enum TrkState { TRK_TRACKING, TRK_SWEEPING, TRK_HOLD, TRK_PARKED };
 
 static TrkState  g_state = TRK_TRACKING;
 static int8_t    g_dir = 1;             // +1/-1
 static float     g_last_fb = -1.0f;     // last feedback value (LDR% or A)
 static uint64_t  g_last_step = 0;
 static uint64_t  g_last_resweep = 0;
+
+// Night parking: at night tracker_target is null (-1) and the LDR reads near
+// 0 (< TRACKER_CLOUD). Park the panel at TRACKER_MIN_ANGLE and hold -- the
+// sweep-to-target branch would otherwise pointlessly step in the dark. Wake
+// at dawn when the LDR rises above the threshold or a target appears.
+static void park_at_min(void)
+{
+    servo_to_angle(TRACKER_MIN_ANGLE);
+    g_last_fb = -1.0f;
+    g_state = TRK_PARKED;
+    printf("[TRK] night: parked at %d deg\n", TRACKER_MIN_ANGLE);
+}
 
 void tracker_tick(void)
 {
@@ -89,13 +101,24 @@ void tracker_tick(void)
     float fb = read_feedback();
 
     // Dark / cloud / signal collapse: sweep toward the sun target, don't
-    // chase noise. With no target (e.g. night, relay down) just hold still.
+    // chase noise. With no target (e.g. night, relay down) park and hold.
     if (fb < TRACKER_CLOUD) {
-        if (g_sun_target >= 0) servo_to_angle((uint8_t)g_sun_target);
-        g_last_fb = -1.0f;
-        g_state = TRK_SWEEPING;
-        DBG_PRINTF("[TRK] low feedback %.1f -> sweep to %d\n", fb, g_sun_target);
+        if (g_sun_target >= 0) {
+            servo_to_angle((uint8_t)g_sun_target);
+            g_last_fb = -1.0f;
+            g_state = TRK_SWEEPING;
+            DBG_PRINTF("[TRK] low feedback %.1f -> sweep to %d\n", fb, g_sun_target);
+        } else if (g_state != TRK_PARKED) {
+            park_at_min();          // night with no target: park at 10 deg
+        }
         return;
+    }
+
+    // Dawn / feedback recovered: leave the parked state and resume stepping.
+    if (g_state == TRK_PARKED) {
+        g_state = TRK_TRACKING;
+        g_last_fb = -1.0f;
+        printf("[TRK] dawn: LDR %.1f, resuming\n", fb);
     }
 
     if (g_last_fb < 0.0f) {          // first reading: pick a direction and step
