@@ -9,3 +9,6 @@ compile_commands.json
 mbed-os
 .claude/worktrees/agent-a21b21674aff3615
 .claude/worktrees/
+
+# TDD oracle for the solar tracker hill-climb (intentionally tracked)
+!hermes-verify-tracker-sim.py
