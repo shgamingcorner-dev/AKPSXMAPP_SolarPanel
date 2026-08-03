@@ -1286,6 +1286,23 @@ static bool poll_device_state_via_relay(void)
             send_device_state_int_via_relay("fan_speed", current_speed);
         }
 
+        // SOLAR TRACKER: coarse sun-position anchor computed relay-side.
+        // tracker_target is 0..180 (servo degrees) during the day, null/-1
+        // at night. The hill-climb in tracker.cpp uses it as the sweep/recovery
+        // target and for night parking. No grace needed -- it's read-only
+        // advisory state, never pushed back by the firmware.
+        int tracker_target = -1;
+        char *tracker_ptr = strstr(g_rx, "\"tracker_target\":");
+        if (tracker_ptr) {
+            char *num_start = tracker_ptr + strlen("\"tracker_target\":");
+            tracker_target = atoi(num_start);
+        }
+        if (tracker_ptr && tracker_target >= 0 && tracker_target <= 180) {
+            tracker_set_sun_target(tracker_target);
+        } else if (tracker_ptr) {
+            tracker_set_sun_target(-1);   // null at night -> park
+        }
+
         // Door lock: mirrors the blind system EXACTLY -- one field end-to-end.
         // The WEBSITE writes door_locked via POST /api/device/door
         // (relay.py relay_door: payload = {'door_locked': ...}); the firmware
