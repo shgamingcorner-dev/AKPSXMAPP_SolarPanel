@@ -164,12 +164,16 @@ static void begin_sweep(void)
 {
     g_best_ldr = 0.0f;
     g_best_pos = 0;
+    g_pos = 0;                 // home = 0 by construction (was never reset:
+                               // sweep ends at 2500+3000-3600=1900, so the
+                               // model drifted and night-return hit phantom 0)
     g_ldr_enabled = true;
     start_phase(TRK_SWEEP_FWD_TO_FLAT);
 }
 
 void tracker_init(void)
 {
+    g_pos = 0;                          // start the model at home
     trackerMotor.period_ms(PERIOD_WIDTH);   // 50Hz, same as fan/door servos
     begin_sweep();
     printf("[TRK] tracker init: 360 motor PB_0 + LDR PA_4, LDR sweep-and-hold\n");
@@ -235,7 +239,7 @@ void tracker_tick(void)
             } else if (g_best_pos < g_pos) {
                 motor_run(TRACKER_REV_DUTY);
             }
-            if (abs(g_best_pos - g_pos) <= 50) {
+            if (abs(g_best_pos - g_pos) <= 150) {   // tolerance > max 100ms step
                 printf("[TRK] reached best pos %ld (LDR %.1f%%)\n",
                        (long)g_pos, g_best_ldr);
                 start_phase(TRK_HOLD_BEST);
