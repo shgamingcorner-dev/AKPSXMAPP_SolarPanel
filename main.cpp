@@ -62,21 +62,12 @@ static uint64_t last_fan_local_change = 0;
 static uint64_t last_fan_remote_change = 0;
 static uint64_t last_door_local_change = 0;
 
-static bool confirmed_lighting = false;
-static bool confirmed_blind = false;
-static uint8_t confirmed_fan_speed = 0;
-static bool confirmed_fan_power = false;
-static bool confirmed_door_locked = true;
 
 static Mutex lighting_timestamp_mutex;
 static Mutex blind_timestamp_mutex;
 static Mutex fan_timestamp_mutex;
 static Mutex door_timestamp_mutex;
 
-static Mutex confirmed_lighting_mutex;
-static Mutex confirmed_blind_mutex;
-static Mutex confirmed_fan_mutex;
-static Mutex confirmed_door_mutex;
 
 DHT11 dht11(DHT11_PIN);
 
@@ -453,7 +444,8 @@ static void set_door_lock(bool locked)
     uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
     printf("[DOOR] Setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
     doorLock.pulsewidth_us(pulse);
-    thread_sleep_for(500);  // Wait for movement
+    // No blocking wait -- see apply_blind; a 500ms stall here delays RFID,
+    // keypad, tracker, and smart mode.
 }
 
 // Diagnostic sweep: verifies the PA_6 door servo hardware end-to-end.
@@ -624,7 +616,10 @@ static void read_dht11(void)
     DHT11VCC = 0;
 }
 
-static float read_temperature(void) { return g_dht_temperature; }
+// NOTE: g_dht_temperature is plain int degrees C (DHT11 returns e.g. 26 for 26C).
+// read_temperature() returns that int as float -- do NOT divide by 100
+// (26/100 = 0.26C made the Smart Mode fan think it was always freezing).
+static float read_temperature(void) { return (float)g_dht_temperature; }
 static float read_humidity(void)    { return g_dht_humidity; }
 
 static float read_current(void)
@@ -1031,27 +1026,6 @@ static bool send_device_state_via_relay(const char *field, bool value)
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     printf(ok ? "[DS] Push OK\n" : "[DS] Unexpected response — check relay logs\n");
-
-    if (ok) {
-        if (strcmp(field, "main_lighting") == 0) {
-            confirmed_lighting_mutex.lock();
-            confirmed_lighting = value;
-            confirmed_lighting_mutex.unlock();
-        } else if (strcmp(field, "blind") == 0) {
-            confirmed_blind_mutex.lock();
-            confirmed_blind = value;
-            confirmed_blind_mutex.unlock();
-        } else if (strcmp(field, "fan_power") == 0) {
-            confirmed_fan_mutex.lock();
-            confirmed_fan_power = value;
-            confirmed_fan_mutex.unlock();
-        } else if (strcmp(field, "door_locked") == 0) {
-            confirmed_door_mutex.lock();
-            confirmed_door_locked = value;
-            confirmed_door_mutex.unlock();
-        }
-    }
-
     at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
     return ok;
 }
@@ -1136,7 +1110,9 @@ static void apply_blind(bool open)
     printf("[DS] Blind: setting pulse to %dus (%s)\n", pulse, open ? "OPEN" : "CLOSED");
 
     motor.pulsewidth_us(pulse);
-    thread_sleep_for(1000);  // Wait for movement
+    // No blocking wait: the PWM servo drives to position on its own; the
+    // previous 1000ms thread_sleep_for stalled the main loop for 1s per
+    // blind actuation (RFID, keypad, tracker, smart mode all delayed).
 
     last_blind_open = open;
     blind_known = true;
@@ -1210,7 +1186,8 @@ static void apply_door_lock(bool locked)
     uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
     printf("[DS] Door: setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
     doorLock.pulsewidth_us(pulse);
-    thread_sleep_for(500);  // Wait for movement
+    // No blocking wait -- see apply_blind; a 500ms stall here delays RFID,
+    // keypad, tracker, and smart mode.
 
     last_door_locked = locked;
     door_locked_known = true;
@@ -1590,7 +1567,7 @@ static void smart_mode_update(void)
     }
 
     // --- Fan: room temp -> speed (hotter = faster) ---
-    float temp_c = read_temperature() / 100.0f;   // g_dht_temperature is x100
+    float temp_c = read_temperature();   // already plain deg C (int -> float)
     uint8_t want_speed;
     bool want_power;
     if (temp_c <= SMART_FAN_TEMP_OFF) {
@@ -1606,7 +1583,15 @@ static void smart_mode_update(void)
         want_power = true;
     }
     if (want_speed != get_fan_speed() || want_power != get_fan_power()) {
-        request_fan_actuate(want_speed, want_power);
+        // Smart Mode is the authority when ON -- drive the fan directly,
+        // bypassing the local/remote timestamp arbitration (which is for
+        // keypad vs website). Stamp the fan state without a local timestamp
+        // so a later website change still wins the arbitration.
+        fan_mutex.lock();
+        fan_speed = want_speed;
+        fan_power = want_power;
+        fan_mutex.unlock();
+        fanServo.write(fan_power ? fan_duty_for(want_speed) : 0.075f);
         printf("[SMART] fan: temp %.1fC -> speed %u%% (%s)\n",
                temp_c, (unsigned)want_speed, want_power ? "ON" : "OFF");
     }
