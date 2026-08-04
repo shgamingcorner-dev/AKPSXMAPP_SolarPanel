@@ -307,6 +307,11 @@ static Mutex   fan_mutex;
 static volatile uint8_t fan_speed = 0;
 static volatile bool fan_power = false;
 
+// Smart Mode: when ON, remote lighting/fan/blind settings are ignored and
+// the firmware drives them from its own sensors (LDR + temperature).
+static volatile bool g_smart_mode = SMART_MODE_DEFAULT;
+static uint64_t g_last_smart_update = 0;
+
 static Mutex   door_mutex;
 static volatile bool door_locked = true;
 
@@ -1246,6 +1251,12 @@ static bool poll_device_state_via_relay(void)
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     if (ok) {
+        // Smart Mode toggle: when ON, remote lighting/fan/blind settings
+        // below are IGNORED (the firmware drives them from its sensors).
+        bool smart_mode = strstr(g_rx, "\"smart_mode\":true") != NULL
+                       || strstr(g_rx, "\"smart_mode\": true") != NULL;
+        g_smart_mode = smart_mode;
+
         bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
                            || strstr(g_rx, "\"main_lighting\": true") != NULL;
 
@@ -1263,10 +1274,15 @@ static bool poll_device_state_via_relay(void)
 
         if (!main_lighting_known || main_lighting != last_main_lighting) {
             if (!lighting_recent) {
-                if (main_lighting) {
+                if (g_smart_mode) {
+                    // Smart Mode controls lighting from the LDR; ignore remote.
+                    printf("[DS] smart mode: ignoring remote main_lighting\n");
+                } else if (main_lighting) {
                     set_brightness(brightness_state);
+                    apply_main_lighting(main_lighting);
+                } else {
+                    apply_main_lighting(false);
                 }
-                apply_main_lighting(main_lighting);
             } else {
                 printf("[DS] Ignoring remote main_lighting (local change < 15s ago)\n");
             }
@@ -1281,7 +1297,11 @@ static bool poll_device_state_via_relay(void)
             blind_timestamp_mutex.unlock();
 
             if (!blind_recent) {
-                request_blind_actuate(blind);
+                if (g_smart_mode) {
+                    printf("[DS] smart mode: ignoring remote blind\n");
+                } else {
+                    request_blind_actuate(blind);
+                }
             } else {
                 printf("[DS] Ignoring remote blind (local change < 15s ago)\n");
             }
@@ -1304,7 +1324,11 @@ static bool poll_device_state_via_relay(void)
         bool local_recent = (now_ms() - last_fan_local_change <= 15000);
         fan_timestamp_mutex.unlock();
 
-        if ((fan_power_state != current_power || fan_speed_state != current_speed) && !local_recent) {
+        if (g_smart_mode) {
+            if (fan_power_state != current_power || fan_speed_state != current_speed) {
+                printf("[DS] smart mode: ignoring remote fan (temp-driven)\n");
+            }
+        } else if ((fan_power_state != current_power || fan_speed_state != current_speed) && !local_recent) {
             fan_timestamp_mutex.lock();
             last_fan_remote_change = now_ms();
             fan_timestamp_mutex.unlock();
@@ -1532,6 +1556,75 @@ static void network_task(void)
 }
 
 //  MAIN — owns RFID polling + LEDs only
+
+// Smart Mode: drive lighting/fan/blinds from LDR + temperature. Called
+// from the main loop every SMART_UPDATE_MS. Non-blocking (uses the same
+// request_* actuate paths as keypad/remote).
+static void smart_mode_update(void)
+{
+    if (!g_smart_mode) return;
+
+    uint64_t now = now_ms();
+    if (now - g_last_smart_update < SMART_UPDATE_MS) return;
+    g_last_smart_update = now;
+
+    float ldr_pct = tracker_get_ldr_pct();   // 0-100, invert already applied
+
+    // --- Main lighting: darker outside -> brighter inside ---
+    uint8_t want_brightness;
+    if (ldr_pct <= SMART_LIGHT_DARK_LDR) {
+        want_brightness = 100;
+    } else if (ldr_pct >= SMART_LIGHT_BRIGHT_LDR) {
+        want_brightness = 0;
+    } else {
+        // linear between DARK and BRIGHT
+        float span = SMART_LIGHT_BRIGHT_LDR - SMART_LIGHT_DARK_LDR;
+        float frac = (ldr_pct - SMART_LIGHT_DARK_LDR) / span;   // 0..1
+        want_brightness = (uint8_t)(100.0f * (1.0f - frac));
+    }
+    if ((uint8_t)g_brightness != want_brightness) {
+        set_brightness(want_brightness);
+        apply_main_lighting(want_brightness > 0);
+        printf("[SMART] lighting: LDR %.1f%% -> brightness %u%%\n",
+               ldr_pct, (unsigned)want_brightness);
+    }
+
+    // --- Fan: room temp -> speed (hotter = faster) ---
+    float temp_c = read_temperature() / 100.0f;   // g_dht_temperature is x100
+    uint8_t want_speed;
+    bool want_power;
+    if (temp_c <= SMART_FAN_TEMP_OFF) {
+        want_speed = 0;
+        want_power = false;
+    } else if (temp_c >= SMART_FAN_TEMP_MAX) {
+        want_speed = 100;
+        want_power = true;
+    } else {
+        float frac = (temp_c - SMART_FAN_TEMP_OFF) / (SMART_FAN_TEMP_MAX - SMART_FAN_TEMP_OFF);
+        want_speed = (uint8_t)(frac * 100.0f);
+        if (want_speed < 1) want_speed = 1;
+        want_power = true;
+    }
+    if (want_speed != get_fan_speed() || want_power != get_fan_power()) {
+        request_fan_actuate(want_speed, want_power);
+        printf("[SMART] fan: temp %.1fC -> speed %u%% (%s)\n",
+               temp_c, (unsigned)want_speed, want_power ? "ON" : "OFF");
+    }
+
+    // --- Blinds: bright outside -> UP (open); dark -> DOWN (closed) ---
+    if (ldr_pct >= SMART_BLIND_BRIGHT_LDR) {
+        if (!last_blind_open) {
+            request_blind_actuate(true);
+            printf("[SMART] blinds UP (LDR %.1f%% bright)\n", ldr_pct);
+        }
+    } else if (ldr_pct <= SMART_BLIND_DARK_LDR) {
+        if (last_blind_open) {
+            request_blind_actuate(false);
+            printf("[SMART] blinds DOWN (LDR %.1f%% dark)\n", ldr_pct);
+        }
+    }
+    // between thresholds: hysteresis, leave as-is
+}
 
 static Thread networkThread(osPriorityNormal, 4096);
 
@@ -1766,6 +1859,9 @@ int main(void)
 
         // ---- Solar tracker: non-blocking time-driven pulley cycle ----
         tracker_tick();
+
+        // ---- Smart Mode: LDR/temp-driven lighting, fan, blinds ----
+        smart_mode_update();
 
         thread_sleep_for(10);
     }

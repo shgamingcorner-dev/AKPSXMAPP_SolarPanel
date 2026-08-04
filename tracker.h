@@ -37,6 +37,7 @@ void    tracker_tick(void);        // non-blocking, call from main loop
 bool    tracker_is_moving(void);   // true while the motor is spinning
 uint8_t tracker_get_phase(void);   // debug: current phase index
 float   tracker_get_best_ldr(void);   // debug: highest LDR seen this sweep
+float   tracker_get_ldr_pct(void);    // current LDR% (0-100, invert applied)
 bool    tracker_is_dark(void);     // LDR module DO: true = dark (tutorial)
 
 #endif // TRACKER_H

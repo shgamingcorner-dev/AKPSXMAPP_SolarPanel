@@ -82,6 +82,19 @@ bool tracker_is_dark(void)
     return ldrDo.read() == 1;
 }
 
+// Current LDR% (0-100). Invert flag (config.h) handles modules whose AO
+// reads HIGH in dark: invert = 100 - raw so "bright" always = high %.
+float tracker_get_ldr_pct(void)
+{
+    float pct = read_ldr_pct();
+#if SMART_LDR_INVERT
+    pct = 100.0f - pct;
+#endif
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    return pct;
+}
+
 static void motor_stop(void)
 {
     trackerMotor.write(TRACKER_STOP_DUTY);

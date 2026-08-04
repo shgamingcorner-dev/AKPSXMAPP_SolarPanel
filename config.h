@@ -111,6 +111,32 @@
 #define TRACKER_LDR_FLOOR       5.0f    // below this = dark/night -> park at home
 #define TRACKER_HOLD_BEST_MS    900000  // hold best-LDR angle 15 minutes
 
+// Smart Mode: automatic LDR/temperature-driven house automation.
+// When ON, the firmware ignores remote lighting/fan/blind settings and
+// drives them from its own sensors. The solar tracker is INDEPENDENT
+// (Option A) -- Smart Mode never touches it.
+#define SMART_MODE_DEFAULT       0       // 0 = off (current behavior), 1 = on
+
+// LDR polarity: 0 = AO reads HIGH in bright light (original assumption),
+// 1 = AO reads HIGH in dark (inverted module). Flip if serial shows wrong.
+#define SMART_LDR_INVERT         0
+
+// Main lighting: LDR% -> brightness 0-100 (darker outside = brighter inside)
+#define SMART_LIGHT_DARK_LDR     20.0f   // LDR% at/below -> 100% brightness
+#define SMART_LIGHT_BRIGHT_LDR   70.0f   // LDR% at/above -> 0% (off)
+
+// Fan: room temperature (C) -> speed (hotter = faster)
+#define SMART_FAN_TEMP_OFF       24.0f   // at/below -> fan OFF (speed 0)
+#define SMART_FAN_TEMP_MAX       32.0f   // at/above -> fan speed 100
+
+// Blinds: LDR% -> up/down (with hysteresis)
+#define SMART_BLIND_BRIGHT_LDR   60.0f   // LDR% >= -> blinds UP (open)
+#define SMART_BLIND_DARK_LDR     15.0f   // LDR% <= -> blinds DOWN (closed)
+
+// Smart Mode update cadence (ms). Re-evaluates lighting/fan/blinds.
+// Every 5s is fine for this codebase (main loop is non-blocking ~10ms).
+#define SMART_UPDATE_MS          5000
+
 // ACS712 20A Current Sensor
 #define ACS712_SENSITIVITY_V_PER_A  0.060f
 #define ACS712_ZERO_V               1.5f
