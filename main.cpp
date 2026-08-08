@@ -29,9 +29,8 @@ static char *g_tx = nullptr;
 static char *g_rx = nullptr;
 static char tagID[21];
 
-// Hardware: Fan servo (360° continuous rotation) + Door lock (SG90)
+// Hardware: Fan servo (360° continuous rotation)
 static PwmOut fanServo(FAN_SERVO_PIN);
-static PwmOut doorLock(DOOR_LOCK_PIN);  // SG90 servo for door lock
 
 MFRC522             mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
@@ -48,9 +47,9 @@ static AnalogIn   current_sensor(CURRENT_SENSOR_PIN);
 // LCD
 unsigned char key2, outChar, outChar2, outChar3;
 unsigned char passWord[] = {'0', '0', '0', '0'};
-char MessageLocked [ ] = "Door Locked              ";
+char MessageLocked [ ] = "RFID Required            ";
 char MessageLocked2 [ ] = "Tagg RFID               ";
-char Message1 [ ] = "1.Blind 2.Window              ";
+char Message1 [ ] = "1.Blind 2.SmartMode          ";
 char Message2 [ ] = "3.Lighting 4.Fans             ";
 char Message3 [ ] = "Invalid try again             ";
 char FanspeedM [ ] = "1:Low 2:Med                  ";
@@ -60,13 +59,11 @@ static uint64_t last_lighting_local_change = 0;
 static uint64_t last_blind_local_change = 0;
 static uint64_t last_fan_local_change = 0;
 static uint64_t last_fan_remote_change = 0;
-static uint64_t last_door_local_change = 0;
 
 
 static Mutex lighting_timestamp_mutex;
 static Mutex blind_timestamp_mutex;
 static Mutex fan_timestamp_mutex;
-static Mutex door_timestamp_mutex;
 
 
 DHT11 dht11(DHT11_PIN);
@@ -222,7 +219,7 @@ static uint8_t fan_menu_selection_to_speed(char key)
 // PB_1 = TIM3_CH4 (default remap) - active in NUCLEO_F103RB pinmap.
 // NOT PC_9: PC_9 forces TIM3 full remap which silently kills the PA_7
 // blind motor (TIM3_CH2 default). Keeping every TIM3 user on default
-// remap lets all three channels (PA_6 door, PA_7 motor, PB_1 light) output.
+// remap lets all three channels (PA_7 motor, PB_1 light) output.
 static PwmOut led_mainLighting_pwm(MAIN_LIGHT_PIN);  // PB_1
 
 static Mutex   brightness_mutex;
@@ -300,68 +297,59 @@ static volatile bool fan_power = false;
 
 // Smart Mode: when ON, remote lighting/fan/blind settings are ignored and
 // the firmware drives them from its own sensors (LDR + temperature).
+// Keypad '2' toggles it; the network task pushes the new state to Supabase
+// via send_device_state_via_relay("smart_mode", ...) so the DB reflects the
+// local toggle and the next poll re-reads it (last change wins, keypad or
+// dashboard — same priority).
 static volatile bool g_smart_mode = SMART_MODE_DEFAULT;
 static uint64_t g_last_smart_update = 0;
 
-static Mutex   door_mutex;
-static volatile bool door_locked = true;
+// Manual override: a keypad press on blind/lighting/fan pauses Smart Mode
+// actuation for SMART_MANUAL_OVERRIDE_MS ("last change wins").
+static Mutex   smart_override_timestamp_mutex;
+static uint64_t smart_override_until = 0;
+
+static bool smart_override_active(void)
+{
+    smart_override_timestamp_mutex.lock();
+    bool active = (now_ms() < smart_override_until);
+    smart_override_timestamp_mutex.unlock();
+    return active;
+}
+
+// Smart Mode local-toggle pipeline (mirrors the blind/lighting pattern):
+//   toggle (keypad '2' -> network task): request_smart_mode_toggle/consume_pending_smart_mode_toggle
+// request_smart_mode_toggle stamps last_smart_local_change (local source); the poll's
+// 15s grace reads it so a keypad push isn't overwritten by a stale remote read.
+static Mutex   smart_mode_toggle_mutex;
+static volatile bool pending_smart_mode_toggle = false;
+static Mutex   smart_mode_timestamp_mutex;
+static uint64_t last_smart_mode_local_change = 0;
+
+static void request_smart_mode_toggle(void)
+{
+    smart_mode_toggle_mutex.lock();
+    pending_smart_mode_toggle = true;
+    smart_mode_toggle_mutex.unlock();
+
+    smart_mode_timestamp_mutex.lock();
+    last_smart_mode_local_change = now_ms();
+    smart_mode_timestamp_mutex.unlock();
+}
+
+static bool consume_pending_smart_mode_toggle(void)
+{
+    smart_mode_toggle_mutex.lock();
+    bool v = pending_smart_mode_toggle;
+    pending_smart_mode_toggle = false;
+    smart_mode_toggle_mutex.unlock();
+    return v;
+}
 
 static Mutex   fan_actuate_mutex;
 static volatile bool pending_fan_actuate = false;
 static volatile uint8_t pending_fan_speed = 0;
 static volatile bool pending_fan_power = false;
-
-// Door lock: mirrors the blind system. Two separate flags avoid a
-// double-consume race:
-//   toggle  (keypad '2' -> network task): request_door_toggle/consume_pending_door_toggle
-//   actuate (network/poll -> main loop):  request_door_actuate/consume_pending_door_actuate
-// request_door_toggle stamps last_door_local_change (local source); the poll's
-// 15s grace reads it so a keypad push isn't overwritten by a stale remote read.
-static Mutex   door_actuate_mutex;
-static volatile bool pending_door_actuate = false;
-static volatile bool pending_door_locked = false;
-static Mutex   door_toggle_mutex;
-static volatile bool pending_door_toggle = false;
-
-static void request_door_toggle(void)
-{
-    door_toggle_mutex.lock();
-    pending_door_toggle = true;
-    door_toggle_mutex.unlock();
-
-    door_timestamp_mutex.lock();
-    last_door_local_change = now_ms();
-    door_timestamp_mutex.unlock();
-}
-
-static bool consume_pending_door_toggle(void)
-{
-    door_toggle_mutex.lock();
-    bool v = pending_door_toggle;
-    pending_door_toggle = false;
-    door_toggle_mutex.unlock();
-    return v;
-}
-
-static void request_door_actuate(bool locked)
-{
-    door_actuate_mutex.lock();
-    pending_door_actuate = true;
-    pending_door_locked = locked;
-    door_actuate_mutex.unlock();
-}
-
-static bool consume_pending_door_actuate(bool *out_locked)
-{
-    door_actuate_mutex.lock();
-    bool v = pending_door_actuate;
-    if (v) {
-        *out_locked = pending_door_locked;
-        pending_door_actuate = false;
-    }
-    door_actuate_mutex.unlock();
-    return v;
-}
 
 static void request_fan_actuate(uint8_t speed, bool power, bool from_remote = false)
 {
@@ -432,39 +420,6 @@ static void set_fan_power(bool on)
     }
 }
 
-static void set_door_lock(bool locked)
-{
-    printf("[DOOR] set_door_lock called with locked=%d\n", locked);
-
-    door_mutex.lock();
-    door_locked = locked;
-    door_mutex.unlock();
-
-    // SG90 servo control with pulse widths
-    uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
-    printf("[DOOR] Setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
-    doorLock.pulsewidth_us(pulse);
-    // No blocking wait -- see apply_blind; a 500ms stall here delays RFID,
-    // keypad, tracker, and smart mode.
-}
-
-// Diagnostic sweep: verifies the PA_6 door servo hardware end-to-end.
-// REMOVE this call from main() once the servo is confirmed moving.
-static void test_door_servo(void)
-{
-    printf("\n=== TESTING DOOR SERVO (PA_6) ===\n");
-    printf("LOCKED (600us)...\n");
-    doorLock.pulsewidth_us(600);
-    thread_sleep_for(2000);
-    printf("UNLOCKED (2400us)...\n");
-    doorLock.pulsewidth_us(2400);
-    thread_sleep_for(2000);
-    printf("LOCKED (600us)...\n");
-    doorLock.pulsewidth_us(600);
-    thread_sleep_for(2000);
-    printf("=== DOOR SERVO TEST COMPLETE ===\n");
-}
-
 static uint8_t get_fan_speed(void)
 {
     fan_mutex.lock();
@@ -481,14 +436,6 @@ static bool get_fan_power(void)
     return v;
 }
 
-static bool get_door_locked(void)
-{
-    door_mutex.lock();
-    bool v = door_locked;
-    door_mutex.unlock();
-    return v;
-}
-
 static void request_blind_toggle(void)
 {
     device_state_mutex.lock();
@@ -498,6 +445,10 @@ static void request_blind_toggle(void)
     blind_timestamp_mutex.lock();
     last_blind_local_change = now_ms();
     blind_timestamp_mutex.unlock();
+
+    smart_override_timestamp_mutex.lock();
+    smart_override_until = now_ms() + SMART_MANUAL_OVERRIDE_MS;
+    smart_override_timestamp_mutex.unlock();
 }
 
 static void request_lighting_toggle(void)
@@ -509,6 +460,10 @@ static void request_lighting_toggle(void)
     lighting_timestamp_mutex.lock();
     last_lighting_local_change = now_ms();
     lighting_timestamp_mutex.unlock();
+
+    smart_override_timestamp_mutex.lock();
+    smart_override_until = now_ms() + SMART_MANUAL_OVERRIDE_MS;
+    smart_override_timestamp_mutex.unlock();
 }
 
 static bool consume_pending_blind_toggle(void)
@@ -821,8 +776,12 @@ static bool send_to_thingspeak(void)
         printf("[TS] Unexpected response — check API key / rate limit\n");
     }
 
+    // Capture the verdict BEFORE closing the link: AT+CIPCLOSE overwrites
+    // g_rx (shared buffer), so re-reading it after the close returns garbage
+    // and a SUCCESSFUL upload would be reported as failure every cycle.
+    bool ok = (strstr(g_rx, "SEND OK") != NULL) || (strstr(g_rx, "200 OK") != NULL);
     at("AT+CIPCLOSE=0\r\n", 1000, "OK", "ERROR");
-    return (strstr(g_rx, "SEND OK") != NULL) || (strstr(g_rx, "200 OK") != NULL);
+    return ok;
 }
 
 //  TELEGRAM SENDER (via the HTTPS relay)
@@ -867,8 +826,12 @@ static bool send_telegram_via_relay(const char *message)
         printf("[TG] Unexpected response — check relay logs / RELAY_SECRET\n");
     }
 
+    // Capture the verdict BEFORE closing the link: AT+CIPCLOSE overwrites
+    // g_rx (shared buffer), so re-reading it after the close returns garbage
+    // and a SUCCESSFUL message would be reported as failure every cycle.
+    bool ok = strstr(g_rx, "200 OK") != NULL;
     at("AT+CIPCLOSE=1\r\n", 500, "OK", "ERROR");
-    return strstr(g_rx, "200 OK") != NULL;
+    return ok;
 }
 
 static std::atomic<uint32_t> g_seq{0};
@@ -881,11 +844,10 @@ static bool send_sensor_telemetry_via_relay(float temperature, float humidity, f
     fmt_float(hum_s,  sizeof(hum_s),  humidity);
     fmt_float(pow_s,  sizeof(pow_s),  power);
 
-    // NOTE: telemetry carries SENSOR data only. Device states (door_locked,
-    // fan_power, fan_speed) must NOT be sent here -- pushing local states every
-    // 15s was overwriting remote (dashboard) changes in Supabase, causing the
-    // door lock to "revert" ~15s after being changed remotely. Device states
-    // are pushed only on change in network_task().
+    // NOTE: telemetry carries SENSOR data only. Device states (fan_power,
+    // fan_speed, smart_mode) must NOT be sent here -- pushing local states
+    // every 15s was overwriting remote (dashboard) changes in Supabase.
+    // Device states are pushed only on change in network_task().
     char body[BUF];
     snprintf(body, sizeof(body),
         "secret=%s&temperature=%s&humidity=%s&power=%s&seq=%lu",
@@ -1085,8 +1047,6 @@ static bool last_blind_open = false;
 static bool blind_known = false;
 static uint8_t last_fan_speed = 0;
 static bool last_fan_power = false;
-static bool last_door_locked = true;
-static bool door_locked_known = false;
 
 static void apply_main_lighting(bool on)
 {
@@ -1173,27 +1133,6 @@ static void apply_fan(uint8_t speed, bool on)
     last_fan_power = final_power;
 }
 
-static void apply_door_lock(bool locked)
-{
-    printf("[DS] apply_door_lock called with locked=%d\n", locked);
-
-    door_mutex.lock();
-    door_locked = locked;
-    door_mutex.unlock();
-
-    // Direct servo control with correct SG90 pulse values:
-    // LOCKED = 0° (600us), UNLOCKED = 180° (2400us)
-    uint16_t pulse = locked ? PULSE_WIDTH_0_DEGREE : PULSE_WIDTH_180_DEGREE;
-    printf("[DS] Door: setting pulse to %dus (%s)\n", pulse, locked ? "LOCKED" : "UNLOCKED");
-    doorLock.pulsewidth_us(pulse);
-    // No blocking wait -- see apply_blind; a 500ms stall here delays RFID,
-    // keypad, tracker, and smart mode.
-
-    last_door_locked = locked;
-    door_locked_known = true;
-    printf("[DS] door -> %s\n", locked ? "LOCKED" : "UNLOCKED");
-}
-
 static bool poll_device_state_via_relay(void)
 {
     if (!esp_open_tcp(4, RELAY_HOST, RELAY_IP, RELAY_PORT, "[DS]")) {
@@ -1228,11 +1167,29 @@ static bool poll_device_state_via_relay(void)
 
     bool ok = strstr(g_rx, "200 OK") != NULL;
     if (ok) {
-        // Smart Mode toggle: when ON, remote lighting/fan/blind settings
-        // below are IGNORED (the firmware drives them from its sensors).
-        bool smart_mode = strstr(g_rx, "\"smart_mode\":true") != NULL
-                       || strstr(g_rx, "\"smart_mode\": true") != NULL;
-        g_smart_mode = smart_mode;
+        // Smart Mode: one field end-to-end. The WEBSITE/dashboard writes
+        // smart_mode via the relay's POST /device-state (field=smart_mode);
+        // the firmware polls smart_mode, and the keypad '2' pushes it.
+        // The 15s grace below protects a fresh keypad '2' push from being
+        // overwritten by a stale remote read while its push is in flight
+        // (keypad and dashboard are equal priority -- last change wins).
+        bool smart_mode_state = strstr(g_rx, "\"smart_mode\":true") != NULL
+                             || strstr(g_rx, "\"smart_mode\": true") != NULL;
+
+        smart_mode_timestamp_mutex.lock();
+        bool smart_recent = (now_ms() - last_smart_mode_local_change <= 15000);
+        smart_mode_timestamp_mutex.unlock();
+
+        // Apply the remote value unless a keypad toggle is still within its
+        // grace. This runs BEFORE the device branches below so the "ignore
+        // remote" checks see the freshly-applied state.
+        if (!smart_recent && smart_mode_state != g_smart_mode) {
+            printf("[DS] Smart Mode from relay: %s\n",
+                   smart_mode_state ? "ON" : "OFF");
+            g_smart_mode = smart_mode_state;
+        } else if (smart_recent) {
+            printf("[DS] Smart Mode poll: local change < 15s ago - not applying remote\n");
+        }
 
         bool main_lighting = strstr(g_rx, "\"main_lighting\":true") != NULL
                            || strstr(g_rx, "\"main_lighting\": true") != NULL;
@@ -1317,37 +1274,6 @@ static bool poll_device_state_via_relay(void)
             printf("[DS] Local fan change recent - pushing local state to relay\n");
             send_device_state_via_relay("fan_power", current_power);
             send_device_state_int_via_relay("fan_speed", current_speed);
-        }
-
-        // Door lock: mirrors the blind system EXACTLY -- one field end-to-end.
-        // The WEBSITE writes door_locked via POST /api/device/door
-        // (relay.py relay_door: payload = {'door_locked': ...}); the firmware
-        // polls door_locked, and the keypad pushes door_locked. smart_lock is
-        // a legacy duplicate column the relay keeps in sync (aliasing).
-        // The 15s grace below protects a fresh keypad '2' push from being
-        // overwritten by a stale remote read while its push is in flight.
-        bool door_locked_state = strstr(g_rx, "\"door_locked\":true") != NULL
-                              || strstr(g_rx, "\"door_locked\": true") != NULL;
-
-        printf("[DS] Door poll: relay says %s, local is %s\n",
-               door_locked_state ? "LOCKED (true)" : "UNLOCKED (false)",
-               get_door_locked() ? "LOCKED (true)" : "UNLOCKED (false)");
-
-        if (!door_locked_known || door_locked_state != last_door_locked) {
-            // Grace: if the keypad just toggled the door (and its push may
-            // still be in flight over the 3-8s AT link), don't apply a stale
-            // remote read on top of it.
-            door_timestamp_mutex.lock();
-            bool door_recent = (now_ms() - last_door_local_change <= 15000);
-            door_timestamp_mutex.unlock();
-
-            if (!door_recent) {
-                printf("[DS] Applying door state from relay: %s\n",
-                       door_locked_state ? "LOCKED" : "UNLOCKED");
-                request_door_actuate(door_locked_state);
-            } else {
-                printf("[DS] Door poll: local change < 15s ago - not applying remote\n");
-            }
         }
     } else {
         printf("[DS] Unexpected response — check relay logs\n");
@@ -1460,24 +1386,20 @@ static void network_task(void)
             }
         }
 
-        // Door lock: mirrors the blind system. The keypad '2' sets the toggle
-        // flag (request_door_toggle); we consume it here, compute the new
-        // state from last_door_locked, push it to the relay, and queue the
-        // actuation for the MAIN loop (which owns apply_door_lock + servo).
-        // Push door_locked -- the SAME column the website writes via
-        // POST /api/device/door (relay.py relay_door). The relay aliases it
-        // to smart_lock so both columns stay in sync.
-        if (consume_pending_door_toggle()) {
-            bool new_door_locked = !last_door_locked;
-            printf("[NET] Door toggle: %s -> %s\n",
-                   last_door_locked ? "LOCKED" : "UNLOCKED",
-                   new_door_locked ? "LOCKED" : "UNLOCKED");
-            request_door_actuate(new_door_locked);
-            if (!send_device_state_via_relay("door_locked", new_door_locked)) {
-                printf("[WARN] Door state push failed\n");
+        // Smart Mode: the keypad '2' sets the toggle flag
+        // (request_smart_mode_toggle); we consume it here, flip g_smart_mode,
+        // push it to the relay, and let the next poll re-read it. Keypad and
+        // dashboard are equal priority -- last change wins (the 15s grace in
+        // the poll protects the in-flight push from a stale read).
+        if (consume_pending_smart_mode_toggle()) {
+            g_smart_mode = !g_smart_mode;
+            printf("[NET] Smart Mode toggled: %s\n",
+                   g_smart_mode ? "ON" : "OFF");
+            if (!send_device_state_via_relay("smart_mode", g_smart_mode)) {
+                printf("[WARN] Smart Mode state push failed\n");
                 consecutive_failures++;
             } else {
-                printf("[NET] Door push successful\n");
+                printf("[NET] Smart Mode push successful\n");
             }
         }
 
@@ -1544,6 +1466,12 @@ static void smart_mode_update(void)
     uint64_t now = now_ms();
     if (now - g_last_smart_update < SMART_UPDATE_MS) return;
     g_last_smart_update = now;
+
+    // Yield to a recent manual (keypad) change: "last change wins".
+    if (smart_override_active()) {
+        printf("[SMART] manual override active - skipping update\n");
+        return;
+    }
 
     float ldr_pct = tracker_get_ldr_pct();   // 0-100, invert already applied
 
@@ -1622,17 +1550,8 @@ int main(void)
     fanServo.period_ms(20);
     fanServo.write(0.075f);
     
-    // Initialize door lock servo (SG90)
-    doorLock.period_ms(PERIOD_WIDTH);
-    doorLock.pulsewidth_us(PULSE_WIDTH_0_DEGREE);  // Start locked (600us / 0°)
-    
     printf("\n=== SERVOS INITIALIZED ===\n");
     printf("Fan neutral duty: 0.075 (7.5%%)\n");
-    printf("Door lock locked pulse: %dus (0°)\n", PULSE_WIDTH_0_DEGREE);
-    printf("Door lock unlocked pulse: %dus (180°)\n\n", PULSE_WIDTH_180_DEGREE);
-
-    // test_door_servo();  // DISABLED after hardware verification (was 6s boot sweep).
-                          // Re-enable to re-verify the PA_6 servo end-to-end.
 
     // Solar tracker: 360° continuous motor on PB_0 (TIM3_CH3, default remap).
     // Time-driven pulley cycle (Phase 1); LDR hill-climb comes later (Phase 2).
@@ -1701,6 +1620,11 @@ int main(void)
                         fan_timestamp_mutex.lock();
                         last_fan_local_change = now_ms();
                         fan_timestamp_mutex.unlock();
+
+                        // Manual fan change pauses Smart Mode fan control
+                        smart_override_timestamp_mutex.lock();
+                        smart_override_until = now_ms() + SMART_MANUAL_OVERRIDE_MS;
+                        smart_override_timestamp_mutex.unlock();
                         
                         if (speed == 0) {
                             fan_mutex.lock();
@@ -1751,9 +1675,9 @@ int main(void)
                             lcdmessage(Message2, 2);
                             break;
                         case '2':
-                            printf("2 is pressed -- toggling Door Lock\n");
-                            request_door_toggle();
-                            lcdmessage("Door Toggled", 1);
+                            printf("2 is pressed -- toggling Smart Mode\n");
+                            request_smart_mode_toggle();
+                            lcdmessage("Smart Mode Toggled", 1);
                             lcdmessage("", 2);
                             thread_sleep_for(500);
                             lcdmessage(Message1, 1);
@@ -1800,12 +1724,6 @@ int main(void)
             apply_blind(blind_open_requested);
         }
 
-        // ---- Consume pending door actuation request from network thread ----
-        bool door_locked_req;
-        if (consume_pending_door_actuate(&door_locked_req)) {
-            apply_door_lock(door_locked_req);
-        }
-
         // ---- Consume pending fan actuation request from network thread ----
         uint8_t fan_speed_req;
         bool fan_power_req;
@@ -1813,8 +1731,8 @@ int main(void)
             apply_fan(fan_speed_req, fan_power_req);
         }
 
-        // ---- Door lock is applied directly inside poll_device_state_via_relay() ----
-        // (remote-only control; no main-loop consume needed)
+        // ---- Smart Mode is applied directly inside poll_device_state_via_relay()
+        // and toggled in network_task() (consume_pending_smart_mode_toggle). ----
 
         // ---- RFID read every loop iteration (every 10ms) --------
         rfid = read_RFID();

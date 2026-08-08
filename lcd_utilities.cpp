@@ -17,9 +17,7 @@ DigitalOut LCD_RS(PC_7);   //  Register Select on LC
 DigitalOut LCD_EN(PA_12);   //  Enable on LCD controller
 //DigitalOut LCD_WR(PA_13);   //  Write on LCD controller
 DigitalOut LCD_WR(PC_6);   //  Write on LCD controller.
-                            //  KEEP ON PC_6 (GPIO). The door-lock servo is on
-                            //  PC_8 (TIM3_CH3 full remap, same mode as the
-                            //  PC_9 light); the TIM3 remap only affects
+                            //  KEEP ON PC_6 (GPIO). The TIM3 remap only affects
                             //  alternate-function pins, so this GPIO is safe.
 
 void lcd_strobe(void);

@@ -43,16 +43,10 @@
                                     // remap which re-routes TIM3_CH2 away from
                                     // PA_7, silently killing the blind motor.
                                     // PB_1 keeps ALL TIM3 users on default remap
-                                    // (motor PA_7 CH2, door PA_6 CH1, light PB_1
-                                    // CH4) so every channel actually outputs.
+                                    // (motor PA_7 CH2, light PB_1 CH4) so every
+                                    // channel actually outputs.
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
-#define DOOR_LOCK_PIN     PA_6      // SG90 door-lock servo. PA_6 = TIM3_CH1
-                                    // DEFAULT remap -- same mode as the PA_7
-                                    // blind motor and PB_1 light (no AFIO fight).
-                                    // NOT PC_8 (full-remap pin would re-trigger
-                                    // the remap conflict). NOT PA_3/PB_7 (excluded
-                                    // from pinmap -> 0x80010130), NOT PC_6 (LCD_WR).
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)
 
 // Motor / Servo Timings - SG90 standard servo (0° to 180°)
@@ -71,15 +65,11 @@
 #define FAN_SERVO_MAX_FWD_US     2000
 #define FAN_SERVO_MAX_REV_US     1000
 
-// Door Lock
-#define DOOR_LOCK_LOCKED       1
-#define DOOR_LOCK_UNLOCKED     0
-
 // Solar Tracker (360° continuous motor on a pulley, time-driven)
 // DHT11VCC repointed to PB_12 (was PB_0) so PB_0 is free for the tracker
-// motor. PB_0 = TIM3_CH3 DEFAULT remap — same family as PA_6/PA_7/PB_1
-// (door/blind/light), no AFIO fight. NEVER use PC_8/PC_9 (TIM3 full remap
-// kills door/blind/light).
+// motor. PB_0 = TIM3_CH3 DEFAULT remap — same family as PA_7/PB_1
+// (blind/light), no AFIO fight. NEVER use PC_8/PC_9 (TIM3 full remap
+// kills blind/light).
 #define DHT11VCC_PIN      PB_12
 #define TRACKER_MOTOR_PIN PB_0      // 360° continuous motor, pulley-driven
 // LDR light sensor module (per "How to use LDR Sensor Module" tutorial):
@@ -136,6 +126,12 @@
 // Smart Mode update cadence (ms). Re-evaluates lighting/fan/blinds.
 // Every 5s is fine for this codebase (main loop is non-blocking ~10ms).
 #define SMART_UPDATE_MS          5000
+
+// Manual override window (ms). While Smart Mode is ON, a keypad press on
+// blind/lighting/fan pauses Smart Mode actuation for this long so the
+// manual change sticks ("last change wins" — same rule as keypad vs
+// dashboard). After the window Smart Mode resumes driving from sensors.
+#define SMART_MANUAL_OVERRIDE_MS 60000
 
 // ACS712 20A Current Sensor
 #define ACS712_SENSITIVITY_V_PER_A  0.060f

@@ -2,8 +2,8 @@
  * Solar panel tracker — 360° continuous motor on a pulley + LDR (see tracker.h).
  *
  * Pin: TRACKER_MOTOR_PIN = PB_0 = TIM3_CH3, DEFAULT remap — same remap
- * family as the PA_6 door, PA_7 blind, and PB_1 light. NEVER PC_8/PC_9
- * (TIM3 full remap reroutes every TIM3 channel and kills door/blind/light).
+ * family as the PA_7 blind and PB_1 light. NEVER PC_8/PC_9
+ * (TIM3 full remap reroutes every TIM3 channel and kills blind/light).
  * DHT11VCC was repointed to PB_12 (config.h) to free PB_0.
  * LDR on LDR_PIN (PA_4, ADC1_IN4) + module DO on LDR_DO_PIN (PD_2).
  *
@@ -187,7 +187,7 @@ static void begin_sweep(void)
 void tracker_init(void)
 {
     g_pos = 0;                          // start the model at home
-    trackerMotor.period_ms(PERIOD_WIDTH);   // 50Hz, same as fan/door servos
+    trackerMotor.period_ms(PERIOD_WIDTH);   // 50Hz, same as fan/blind servos
     begin_sweep();
     printf("[TRK] tracker init: 360 motor PB_0 + LDR PA_4, LDR sweep-and-hold\n");
 }
