@@ -5,7 +5,8 @@
  * family as the PA_7 blind and PB_1 light. NEVER PC_8/PC_9
  * (TIM3 full remap reroutes every TIM3 channel and kills blind/light).
  * DHT11VCC was repointed to PB_12 (config.h) to free PB_0.
- * LDR on LDR_PIN (PA_4, ADC1_IN4) + module DO on LDR_DO_PIN (PD_2).
+ * LDR on LDR_PIN (PA_4, ADC1_IN4). No module DO pin — "dark" is derived
+ * from the analog reading via tracker_is_dark().
  *
  * SWEEP phases (identical to the Arduino sketch):
  *   0: FWD  to FLAT   (TRACKER_MS_TO_FLAT)      -> stop, hold flat
@@ -34,7 +35,9 @@
 
 static PwmOut   trackerMotor(TRACKER_MOTOR_PIN);
 static AnalogIn ldr(LDR_PIN);
-static DigitalIn ldrDo(LDR_DO_PIN);   // module DO: 1 = dark, 0 = light (tutorial)
+// NO digital DO pin: with a bare LDR + resistor divider there is no
+// comparator output. "Dark" is derived from the analog reading instead
+// (see tracker_is_dark()).
 
 // millisecond clock (replaces deprecated Kernel::get_ms_count on mbed 6)
 static uint64_t now_ms(void)
@@ -76,10 +79,13 @@ static float read_ldr_pct(void)
     return (sum / TRACKER_LDR_AVG_SAMPLES) * 100.0f;   // 0..100%
 }
 
-// Module DO comparator output: 1 = dark, 0 = light (per tutorial sample code)
+// Module DO comparator output: 1 = dark, 0 = light (per tutorial sample code).
+// With a bare LDR (no module) there is no DO pin, so "dark" is derived from
+// the analog LDR% instead: below TRACKER_LDR_FLOOR counts as dark. Uses
+// tracker_get_ldr_pct() (invert applied) so SMART_LDR_INVERT keeps working.
 bool tracker_is_dark(void)
 {
-    return ldrDo.read() == 1;
+    return tracker_get_ldr_pct() < TRACKER_LDR_FLOOR;
 }
 
 // Current LDR% (0-100). Invert flag (config.h) handles modules whose AO

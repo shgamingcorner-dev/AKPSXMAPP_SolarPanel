@@ -72,14 +72,15 @@
 // kills blind/light).
 #define DHT11VCC_PIN      PB_12
 #define TRACKER_MOTOR_PIN PB_0      // 360° continuous motor, pulley-driven
-// LDR light sensor module (per "How to use LDR Sensor Module" tutorial):
-//   AO (analog out) -> PA_4 = ADC1_IN4 (free). NOT PA_0 -- PA_0 is the
-//   ACS712 current sensor (existing telemetry, keep untouched). PA_4 is
-//   electrically identical (same ADC1, 0..3.3V -> read() 0.0..1.0).
-//   DO (digital out, module comparator) -> PD_2 (free).
+// LDR light sensor — BARE LDR + resistor divider (no module):
+//   LDR_PIN (PA_4 = ADC1_IN4) reads the divider midpoint, 0..3.3V -> read() 0.0..1.0.
+//   NOT PA_0 -- PA_0 is the ACS712 current sensor (keep untouched).
+//   Wiring: 3.3V -> LDR -> PA_4 -> R(10k) -> GND  (LDR on top, R to GND).
+//   Brighter light -> LDR resistance drops -> voltage at PA_4 rises -> higher %.
+//   NO DO pin: with a bare LDR there is no comparator output; "dark" is
+//   derived from the analog reading (see tracker_is_dark()).
 //   VCC -> 3.3V, GND -> GND.
 #define LDR_PIN           PA_4
-#define LDR_DO_PIN        PD_2
 
 // Phase 1: time-driven pulley cycle (exact Arduino sketch timings)
 #define TRACKER_STOP_DUTY      0.075f   // neutral/stop (1500us equivalent)

@@ -14,7 +14,7 @@ Updated: 2026-08-08 — **door lock servo (PA_6) removed; keypad '2' is now Smar
 | **PA_0** | Current sensor (ACS712) | AnalogIn | ADC1_IN0 | 20A sensor via 10k/15k divider, 0.6 ratio |
 | **PA_1** | Fan servo | PwmOut | TIM2_CH2 | 360° continuous servo, neutral 1500µs (0.075 duty) |
 | **PA_2** | MFRC522 RST | DigitalOut | — | Reset/power-down for RFID |
-| **PA_4** | LDR analog out (AO) | AnalogIn | ADC1_IN4 | Light sensor, 0..3.3V → 0..100% |
+| **PA_4** | LDR analog (bare LDR + divider) | AnalogIn | ADC1_IN4 | 3.3V→LDR→PA_4→10k→GND; bright = high % |
 | **PA_7** | Blind/curtain motor | PwmOut | TIM3_CH2 (default) | SG90, 600µs closed / 2400µs open |
 | **PB_0** | Solar tracker motor | PwmOut | TIM3_CH3 (default) | 360° continuous motor, pulley |
 | **PB_1** | Main light | PwmOut | TIM3_CH4 (default) | 100Hz PWM, brightness 0-100% |
@@ -40,7 +40,7 @@ Updated: 2026-08-08 — **door lock servo (PA_6) removed; keypad '2' is now Smar
 | **PC_11** | ESP-01 RX (from ESP TX) | UART RX | USART3 | |
 | **PA_8–PA_11** | LCD data D4–D7 | PortOut | PortA mask 0xF00 | 4-bit mode |
 | **PA_12** | LCD EN (enable) | DigitalOut | GPIO | |
-| **PD_2** | LDR DO (digital out) | DigitalIn | — | Module comparator: 1 = dark |
+| **PD_2** | ~~LDR DO (module)~~ | **REMOVED** | — | Bare LDR has no DO; dark derived from analog |
 | **PA_6** | ~~Door lock servo~~ | **REMOVED** | — | Hardware no longer has the door servo |
 
 ## Removed (door lock)
@@ -53,6 +53,23 @@ Updated: 2026-08-08 — **door lock servo (PA_6) removed; keypad '2' is now Smar
 - Keypad **2** is now the **Smart Mode toggle** (was "Door Lock").
 - Relay `POST /api/device/door` route — **removed**; `door_locked`/`smart_lock`
   fields dropped from the firmware-facing GET/POST payloads.
+
+## Bare LDR wiring (replaces the LDR module)
+
+The module's **AO** (analog out) and **DO** (digital comparator out) are replaced
+by a single bare LDR + one resistor divider on **PA_4**:
+
+```
+3.3V ── LDR ── PA_4 ── 10kΩ ── GND
+```
+
+- Brighter light → LDR resistance drops → voltage at PA_4 rises → higher %.
+- Matches `SMART_LDR_INVERT 0` (AO reads HIGH in bright). If the serial log shows
+  the opposite, flip `SMART_LDR_INVERT` to 1.
+- **No DO pin**: the old module comparator (`PD_2`) is gone. "Dark" is derived
+  from the analog reading: `tracker_is_dark()` returns true when LDR% <
+  `TRACKER_LDR_FLOOR` (5.0). The threshold is adjustable in config.h.
+- `PD_2` is now free (was `LDR_DO_PIN`).
 
 ## Keypad map (after change)
 
