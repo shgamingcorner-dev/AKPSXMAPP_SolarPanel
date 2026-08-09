@@ -37,6 +37,7 @@ static uint64_t now_ms(void)
 // ---------------------------------------------------------------------------
 static uint64_t g_epoch_sec = 0;      // Unix epoch (UTC seconds)
 static bool     g_has_time  = false;
+static uint64_t g_last_aim  = 0;      // ms since boot of last sun-position recompute
 
 void sun_tracker_set_epoch(uint64_t epoch_sec)
 {
@@ -151,7 +152,6 @@ static int32_t  g_pos = 0;              // signed cumulative run time (ms)
 static int32_t  g_target = 0;           // target position (ms)
 static bool     g_moving = false;
 static uint64_t g_last_pos_update = 0;
-static uint64_t g_last_aim = 0;
 static float    g_azimuth = 0.0f;
 static float    g_elevation = 0.0f;
 static bool     g_is_day = false;
