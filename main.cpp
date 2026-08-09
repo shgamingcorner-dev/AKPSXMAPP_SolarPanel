@@ -1525,6 +1525,11 @@ static void smart_mode_update(void)
     }
 
     // --- Blinds: bright outside -> UP (open); dark -> DOWN (closed) ---
+    // State tracking: the physical curtain state is what apply_blind()
+    // last set (last_blind_open). We actuate ONLY when the LDR target
+    // differs from that physical state, so repeated updates don't spam the
+    // servo. When the target is in the hysteresis band (DARK..BRIGHT),
+    // leave the curtain as-is.
     if (ldr_pct >= SMART_BLIND_BRIGHT_LDR) {
         if (!last_blind_open) {
             request_blind_actuate(true);
