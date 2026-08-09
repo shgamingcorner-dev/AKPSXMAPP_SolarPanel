@@ -13,6 +13,7 @@
 #include "keypad.h"
 #include "config.h"
 #include "tracker.h"
+#include "sun_tracker.h"
 
 #define BUF      512
 #define RX_BUF   1024
@@ -1315,6 +1316,58 @@ static void wifi_reconnect(void)
     esp_init();
 }
 
+// Fetch Unix epoch time from the relay /time endpoint (for the astronomical
+// sun tracker). Uses the same single-connection AT pattern as the poll.
+// Parses "epoch":N from the JSON. Returns true on success.
+static bool fetch_epoch_time_via_relay(void)
+{
+    if (!esp_open_tcp(4, RELAY_HOST, RELAY_IP, RELAY_PORT, "[TIME]")) {
+        return false;
+    }
+
+    char query[BUF];
+    snprintf(query, sizeof(query),
+        "GET /time?secret=%s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        RELAY_SECRET, RELAY_HOST);
+
+    int req_len = strlen(query);
+    snprintf(g_tx, BUF, "AT+CIPSEND=4,%d\r\n", req_len);
+    at(g_tx, 1000, ">", "ERROR");
+    if (!strstr(g_rx, ">")) {
+        esp_read(1000, ">", "ERROR");
+        if (!strstr(g_rx, ">")) {
+            printf("[TIME] No > prompt\r\n");
+            at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+            return false;
+        }
+    }
+
+    esp_send(query);
+    if (esp_read(3000, "CLOSED") <= 0) {
+        at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+        return false;
+    }
+
+    bool ok = strstr(g_rx, "200 OK") != NULL;
+    if (ok) {
+        char *epoch_ptr = strstr(g_rx, "\"epoch\":");
+        if (epoch_ptr) {
+            unsigned long long epoch = strtoull(epoch_ptr + 8, NULL, 10);
+            if (epoch > 1000000000ULL) {
+                sun_tracker_set_epoch(epoch);
+                printf("[TIME] epoch=%llu\r\n", epoch);
+                return true;
+            }
+        }
+        printf("[TIME] no valid epoch in response\r\n");
+    }
+    at("AT+CIPCLOSE=4\r\n", 500, "OK", "ERROR");
+    return false;
+}
+
 //  NETWORK TASK
 
 static void network_task(void)
@@ -1331,7 +1384,15 @@ static void network_task(void)
     uint64_t last_send    = 0;
     uint64_t last_tg_send = 0;
     uint64_t last_device_state_poll = 0;
+    uint64_t last_time_fetch = 0;
     int consecutive_failures = 0;
+
+    // SUN mode: fetch epoch time once at boot (for the astronomical tracker).
+#if TRACKER_MODE == 1
+    if (!sun_tracker_has_time()) {
+        fetch_epoch_time_via_relay();
+    }
+#endif
 
     while (1) {
         uint64_t now = now_ms();
@@ -1401,6 +1462,15 @@ static void network_task(void)
             } else {
                 printf("[NET] Smart Mode push successful\n");
             }
+        }
+
+        if (now - last_time_fetch >= SUN_TIME_REFRESH_MS) {
+            last_time_fetch = now;
+#if TRACKER_MODE == 1
+            if (!sun_tracker_has_time()) {
+                fetch_epoch_time_via_relay();   // keep clock fresh for SUN mode
+            }
+#endif
         }
 
         if (now - last_device_state_poll >= DEVICE_STATE_POLL_MS) {
@@ -1561,6 +1631,9 @@ int main(void)
     // Solar tracker: 360° continuous motor on PB_0 (TIM3_CH3, default remap).
     // Time-driven pulley cycle (Phase 1); LDR hill-climb comes later (Phase 2).
     tracker_init();
+#if TRACKER_MODE == 1
+    sun_tracker_init();
+#endif
 
     // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
     // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
@@ -1766,7 +1839,11 @@ int main(void)
         }
 
         // ---- Solar tracker: non-blocking time-driven pulley cycle ----
+#if TRACKER_MODE == 1
+        sun_tracker_tick();
+#else
         tracker_tick();
+#endif
 
         // ---- Smart Mode: LDR/temp-driven lighting, fan, blinds ----
         smart_mode_update();

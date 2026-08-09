@@ -102,6 +102,44 @@
 #define TRACKER_LDR_FLOOR       5.0f    // below this = dark/night -> park at home
 #define TRACKER_HOLD_BEST_MS    900000  // hold best-LDR angle 15 minutes
 
+// ============================================================
+// Sun Tracker mode (astronomical, time + location based)
+// ============================================================
+// TRACKER_MODE selects how the solar panel aims:
+//   0 = LDR sweep-and-hold (existing behavior, sensor based)
+//   1 = SUN mode (astronomical: compute sun azimuth from clock + SG location)
+// In SUN mode the motor is driven to the position matching the sun's current
+// azimuth (mapped to the same 0..1900ms position space as the LDR sweep),
+// re-aiming every SUN_UPDATE_MS. At night (sun below horizon) it parks at
+// SUN_NIGHT_PARK_POS. Time comes from the relay /time endpoint (fetched at
+// boot + every SUN_TIME_REFRESH_MS by the network thread); if no time is
+// available it stays parked (safe default, no random motion).
+#define TRACKER_MODE             0       // 0 = LDR sweep, 1 = SUN (astronomical)
+
+// Singapore location (WGS84) + timezone
+#define SUN_LATITUDE             1.35f   // deg N
+#define SUN_LONGITUDE            103.82f // deg E
+#define SUN_TIMEZONE_UTC_OFFSET  8       // UTC+8 (Singapore, no DST)
+
+// Azimuth -> motor position mapping (same position space as the LDR sweep).
+// The panel physically sweeps from home (morning/east end) to max
+// (afternoon/west end). Sun azimuth: east=90, south=180, west=270 (0=north).
+// CALIBRATE these to your rig: set SUN_POS_EAST = motor position when the
+// panel faces due east, SUN_POS_WEST = motor position when it faces due
+// west (max physical travel = TRACKER_MS_TO_FLAT + TRACKER_MS_FWD_MAX = 5500).
+#define SUN_POS_EAST             0       // motor pos at azimuth 90 (east)
+#define SUN_POS_WEST             5500    // motor pos at azimuth 270 (west)
+#define SUN_POS_TOTAL            5500    // SUN_POS_WEST - SUN_POS_EAST (span)
+
+// Cadence + night behavior
+#define SUN_UPDATE_MS            300000  // re-aim every 5 min (sun moves ~1.25°/min)
+#define SUN_TIME_REFRESH_MS      600000  // re-fetch epoch time every 10 min
+#define SUN_NIGHT_PARK_POS       0       // parked position at night (home)
+
+// Elevation gate: sun must be above this altitude for SUN mode to track
+// (prevents chasing the sun below the horizon at dawn/dusk).
+#define SUN_MIN_ELEVATION        3.0f    // deg
+
 // Smart Mode: automatic LDR/temperature-driven house automation.
 // When ON, the firmware ignores remote lighting/fan/blind settings and
 // drives them from its own sensors. The solar tracker is INDEPENDENT

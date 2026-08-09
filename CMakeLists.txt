@@ -25,6 +25,7 @@ target_sources(${APP_TARGET}
         keypad_utilities.cpp
         lcd_utilities.cpp
         tracker.cpp
+        sun_tracker.cpp
 )
 
 target_link_libraries(${APP_TARGET}
