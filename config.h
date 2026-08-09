@@ -121,8 +121,11 @@
 #define SMART_FAN_TEMP_MAX       32.0f   // at/above -> fan speed 100
 
 // Blinds: LDR% -> up/down (with hysteresis)
-#define SMART_BLIND_BRIGHT_LDR   60.0f   // LDR% >= -> blinds UP (open)
-#define SMART_BLIND_DARK_LDR     15.0f   // LDR% <= -> blinds DOWN (closed)
+// Tuned 2026-08-09: finger-cover on the bare LDR drops it to ~42-48%, so
+// DARK must be above that (~45) for a finger test to close the blinds;
+// BRIGHT stays above DARK (~55) so flashing re-opens them.
+#define SMART_BLIND_BRIGHT_LDR   55.0f   // LDR% >= -> blinds UP (open)
+#define SMART_BLIND_DARK_LDR     45.0f   // LDR% <= -> blinds DOWN (closed)
 
 // Smart Mode update cadence (ms). Re-evaluates lighting/fan/blinds.
 // Every 5s is fine for this codebase (main loop is non-blocking ~10ms).
