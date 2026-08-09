@@ -615,15 +615,50 @@ typedef struct {
     const char *label;
 } ts_field_t;
 
-#define TS_NUM_FIELDS 4
+#define TS_NUM_FIELDS 5
 static ts_field_t ts_fields[TS_NUM_FIELDS] = {
     { TS_FIELD_TEMPERATURE, "", "Temperature" },
     { TS_FIELD_HUMIDITY,    "", "Humidity"    },
     { TS_FIELD_CURRENT,     "", "Current"     },
     { TS_FIELD_RFIDQ,       "", "RFID"        },
+    { TS_FIELD_BATTERY,     "", "Battery"     },
 };
 
 //  ESP-01 LOW-LEVEL  (all called only from the network task)
+
+// ---------------------------------------------------------------------------
+// Simulated solar battery (ThingSpeak field5, 0-100%)
+// Charges when "sunlight" is detected (source selected by BATTERY_SOURCE),
+// drains -1% per tick otherwise. Purely virtual — no physical battery.
+// Called from the network task every BATTERY_TICK_MS (same cadence as the
+// ThingSpeak send) so ts_fields[4] is fresh for each upload.
+// ---------------------------------------------------------------------------
+static int g_battery_pct = BATTERY_START_PCT;
+
+static void battery_tick(void)
+{
+    bool charging = false;
+#if BATTERY_SOURCE == 1
+    // Current mode: the ACS712 must see real current (> noise floor).
+    float cur = read_current();
+    if (cur < 0.0f) cur = -cur;              // magnitude
+    charging = (cur >= BATTERY_ACS712_MIN_A);
+#else
+    // LDR mode: bright LDR = sun out = charging.
+    charging = (tracker_get_ldr_pct() >= BATTERY_LDR_CHARGE_MIN);
+#endif
+
+    if (charging) {
+        if (g_battery_pct < 100) g_battery_pct += BATTERY_CHARGE_STEP;
+    } else {
+        if (g_battery_pct > 0)   g_battery_pct -= BATTERY_DRAIN_STEP;
+    }
+    if (g_battery_pct > 100) g_battery_pct = 100;
+    if (g_battery_pct < 0)   g_battery_pct = 0;
+
+    snprintf(ts_fields[4].value, sizeof(ts_fields[4].value), "%d", g_battery_pct);
+    printf("[BATT] %d%% %s\n", g_battery_pct, charging ? "CHG" : "---");
+}
 
 static void esp_drain(void)
 {
@@ -1491,6 +1526,9 @@ static void network_task(void)
             float humidity    = read_humidity();
             float current     = read_current();
             int   rfid        = get_latest_rfid();
+
+            // Simulated battery: update first so field5 is fresh for the send.
+            battery_tick();
 
             fmt_float(ts_fields[0].value, sizeof(ts_fields[0].value), temperature);
             fmt_float(ts_fields[1].value, sizeof(ts_fields[1].value), humidity);

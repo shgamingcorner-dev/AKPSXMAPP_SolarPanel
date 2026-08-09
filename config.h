@@ -26,6 +26,7 @@
 #define TS_FIELD_HUMIDITY      2
 #define TS_FIELD_CURRENT       3
 #define TS_FIELD_RFIDQ         4
+#define TS_FIELD_BATTERY       5
 
 // RFID UIDs
 #define RFID_UID_CARD  "15828045"
@@ -139,6 +140,24 @@
 // Elevation gate: sun must be above this altitude for SUN mode to track
 // (prevents chasing the sun below the horizon at dawn/dusk).
 #define SUN_MIN_ELEVATION        3.0f    // deg
+
+// ============================================================
+// Simulated solar battery (ThingSpeak field5, 0-100%)
+// ============================================================
+// A virtual battery that charges when "sunlight" is detected and drains
+// otherwise (-1%/tick). Purely for demo — no physical battery. The charge
+// source is a COMPILE-TIME toggle (reflash to switch), same pattern as
+// TRACKER_MODE:
+//   BATTERY_SOURCE 0 = LDR (bright LDR = charging) — works now, no panel
+//   BATTERY_SOURCE 1 = ACS712 current (|A| >= threshold = charging) — real
+//                      once the solar panel is wired in series with the sensor
+#define BATTERY_START_PCT       50      // boot value (0-100)
+#define BATTERY_CHARGE_STEP     1       // % gained per tick while charging
+#define BATTERY_DRAIN_STEP      1       // % lost per tick while NOT charging
+#define BATTERY_TICK_MS         15000   // same cadence as the ThingSpeak send
+#define BATTERY_SOURCE          0       // 0 = LDR, 1 = ACS712 current
+#define BATTERY_LDR_CHARGE_MIN  50.0f   // LDR% >= this = "sun out" -> charging
+#define BATTERY_ACS712_MIN_A    0.5f    // |current| >= this = charging (above 20A-module noise floor)
 
 // Smart Mode: automatic LDR/temperature-driven house automation.
 // When ON, the firmware ignores remote lighting/fan/blind settings and
