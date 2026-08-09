@@ -62,13 +62,15 @@ is why it's the current host.
 - **RFID**: reads card/tag UID via the MFRC522, matches against `RFID_UID_CARD`/`RFID_UID_TAG`.
 - **ThingSpeak**: uploads temperature, humidity, current, and RFID state every `SEND_INTERVAL_MS`
   (15s).
-- **Current sensing**: `read_current()` reads a real ACS712 (20A, 100mV/A) via `AnalogIn` on
-  `PA_0`. The sensor runs on 5V but the STM32 ADC only tolerates 3.3V, so its output goes through a
-  10kΩ/15kΩ divider first (0.6 ratio) — the firmware undoes that scaling when converting the pin
-  voltage back to amps. 20 samples are averaged per read to smooth out noise from the shared power
-  rail (see the WiFi instability note below). If a reading looks off-zero with nothing connected,
-  recalibrate `ACS712_ZERO_V` in `main.cpp` to the value you actually measure — sensor offset and
-  divider resistor tolerance both shift this slightly from the ideal 1.5V.
+- **Current sensing**: `read_current()` reads a real ACS712 20A module (100mV/A) via `AnalogIn` on
+  `PA_0`. The module is powered from 5V (zero output = VCC/2 ≈ 2.5V) and its OUT goes straight to
+  PA_0 (ADC reads 0-3.3V, which comfortably covers the sensor's 2.5V zero point). 20 samples are
+  averaged per read to smooth out noise from the shared power rail. **Calibrated 2026-08-09**:
+  `ACS712_ZERO_V = 2.6V` (this module's measured zero with no load — the textbook 2.5V was off by
+  0.1V and read as a false ~1A). If you re-zero it, read the sensor output with NO load and update
+  `ACS712_ZERO_V` in `config.h`. Note: a single LED/resistor draws only a few mA — below the 20A
+  module's ~0.1A resolution, so it reads ~0A; the sensor is meant for the solar panel output
+  (several amps) wired in series with the panel.
 - **Command Center**: `poll_device_state_via_relay()` polls the relay's `GET /device-state`
   route every `DEVICE_STATE_POLL_MS` (7s) and drives the actuators to match the
   dashboard's Supabase toggles, only actuating on an actual value change:
@@ -98,8 +100,10 @@ is why it's the current host.
   - **Lighting** from the LDR: darker outside → brighter inside (linear 20%→70% LDR maps
     to 100%→0% brightness).
   - **Fan** from the DHT11 temperature: 24°C→off, 32°C→100%, linear in between.
-  - **Blinds** from the LDR: bright (≥60%) → up/open, dark (≤15%) → down/closed,
-    with hysteresis in between.
+  - **Blinds** from the LDR: bright (≥60%) → up/open, dark (≤50%) → down/closed,
+    with hysteresis in between. (Tuned 2026-08-09 from real finger tests: the bare
+    LDR reads ~47% when covered, so DARK=50 closes on a finger-cover; BRIGHT=60
+    re-opens on a flashlight.)
   A manual keypad press on blind/lighting/fan pauses Smart Mode for
   `SMART_MANUAL_OVERRIDE_MS` (60s) so a manual change sticks — last change wins.
   The `smart_mode` column is polled every 7s and pushed on keypad toggle, end-to-end
@@ -108,6 +112,22 @@ is why it's the current host.
   (Door Lock) is now the Smart Mode toggle; the door-lock code, the `door_locked`/
   `smart_lock` column aliasing, and the `POST /api/device/door` relay route are gone.
   If a `door_locked`/`smart_lock` reference survives anywhere, it is stale.
+- **Solar tracker — two modes** (`sun_tracker.{h,cpp}`, select via `TRACKER_MODE` in config.h):
+  - **`TRACKER_MODE 0` — LDR sweep-and-hold** (default, `tracker.cpp`): a 360° continuous
+    motor on a pulley (`PB_0`, TIM3_CH3) sweeps through the panel arc while an LDR on
+    `PA_4` is sampled every 100ms; the brightest angle is remembered, the motor returns
+    there and holds `TRACKER_HOLD_BEST_MS`, then re-sweeps. No encoder — position is
+    tracked as cumulative motor run-time (ms).
+  - **`TRACKER_MODE 1` — SUN (astronomical)** (`sun_tracker.cpp`): computes the sun's
+    azimuth/elevation for Singapore (1.35°N, 103.82°E, UTC+8) from the current time
+    (NOAA solar equations, float, ~0.05° accuracy). Maps azimuth 90°→270° (east→west)
+    linearly to motor position 0→5500ms and drives there, re-aiming every `SUN_UPDATE_MS`
+    (5 min). At night (elevation < `SUN_MIN_ELEVATION` 3°) it parks at
+    `SUN_NIGHT_PARK_POS` (0 = home/east). Time comes from the relay's new `/time`
+    endpoint, fetched at boot + every `SUN_TIME_REFRESH_MS` (10 min); with no time it
+    stays parked (safe default). **Calibration**: position 0 must physically face east
+    at boot, and `SUN_POS_WEST` (5500ms) must equal the full east→west motor travel —
+    adjust to your pulley rig if not.
 - **Stability fixes**: RAM usage trimmed (smaller shared buffers, explicit thread stack size),
   and the Telegram response check now looks at the HTTP status line instead of searching for
   `"ok":true` in the JSON body, since the 256-byte read buffer can truncate the body before that
@@ -218,12 +238,10 @@ is why it's the current host.
 - **`gate_servo` was renamed to `blind`** across Supabase, the relay, the frontend, and the
   firmware — "gate" was never an accurate name for a window blind. If you find a `gate_servo`
   or `gateServo` reference anywhere, it is stale.
-- **ACS712 still needs calibrating.** It reads roughly 0.5-5 A at rest and the pin voltage
-  wanders between ~1.5 V and ~1.8 V, so the noise alone is worth several amps. `ACS712_ZERO_V`
-  is still the *theoretical* 1.5 V rather than a measured one. Measure the resting `pin=X.XV`
-  from the debug line with genuinely zero current flowing and set the constant to that. The
-  wander itself is worth investigating separately — it points at the same shared-rail
-  instability as the ESP-01 resets.
+- **ACS712 calibrated (2026-08-09).** `ACS712_ZERO_V = 2.6V` is now the *measured* resting output
+  of this specific 20A module (the old theoretical 1.5V/2.5V assumptions read a false ~1A at
+  rest). It reads ~0.0A with no load. The remaining sub-0.1A wander is normal ADC noise — the 20A
+  module can't resolve single-LED currents (a few mA); it's sized for the solar panel output.
 - **WiFi instability under load.** Serial logs show `WIFI DISCONNECT` happening frequently, often
   right around an RFID scan — most likely the ESP-01 and MFRC522 briefly drawing current spikes at
   the same time and browning out a shared, under-rated power supply. The auto-reconnect logic
@@ -260,6 +278,13 @@ PB15 as well
 The LED will be red if there is no RFID in range
 Data will be uploaded to said thinkspeak
 Data will be sent to supabase
+Solar tracker:
+- `TRACKER_MODE 0`: `[TRK] sweep done: best LDR xx.x% at pos xxx, DO=light` then
+  `[TRK] reached best pos xxx` — the panel sweeps, aims at the brightest angle, holds.
+- `TRACKER_MODE 1`: `[TIME] epoch=...` then `[SUN] az=xx.x ele=xx.x DAY -> target pos xxxx`
+  (or `NIGHT -> target pos 0`). In daylight the motor drives to the sun's azimuth position
+  and re-aims every 5 min; at night it parks at position 0 (face the panel east at boot so
+  position 0 = east).
 
 ## Troubleshooting
 Text me or its just skill issue idk
