@@ -1,7 +1,8 @@
 {
     "target_overrides": {
         "*": {
-            "rtos.main-thread-stack-size": 4096
+            "rtos.main-thread-stack-size": 4096,
+            "platform.printf-float": true
         }
     }
 }
