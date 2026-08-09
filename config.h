@@ -175,9 +175,11 @@
 // dashboard). After the window Smart Mode resumes driving from sensors.
 #define SMART_MANUAL_OVERRIDE_MS 60000
 
-// ACS712 20A Current Sensor
-#define ACS712_SENSITIVITY_V_PER_A  0.060f
-#define ACS712_ZERO_V               1.5f
+// ACS712 20A Current Sensor — powered from 5V (module VCC pin).
+// Zero-current output = VCC/2 = 2.5V. Sensitivity 100mV/A (20A variant).
+// (Was 0.060/1.5 = 30A@3.3V config; wrong for this module -> garbage 15-18A.)
+#define ACS712_SENSITIVITY_V_PER_A  0.100f
+#define ACS712_ZERO_V               2.5f
 #define ADC_VREF                    3.3f
 
 // Network Timeouts
