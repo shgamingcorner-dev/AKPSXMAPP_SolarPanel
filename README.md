@@ -60,8 +60,12 @@ is why it's the current host.
   `AT+CWJAP` — see the reconnect note under AT-command robustness for why a bare rejoin is
   not enough to recover.
 - **RFID**: reads card/tag UID via the MFRC522, matches against `RFID_UID_CARD`/`RFID_UID_TAG`.
-- **ThingSpeak**: uploads temperature, humidity, current, and RFID state every `SEND_INTERVAL_MS`
-  (15s).
+- **ThingSpeak**: uploads temperature, humidity, current, RFID state, and a simulated battery
+  level every `SEND_INTERVAL_MS` (15s). The battery (field5, 0-100%) is a virtual demo: it
+  charges +1%/tick when sunlight is detected and drains -1%/tick otherwise. Charge source is
+  `BATTERY_SOURCE` in config.h: `0` = LDR (bright LDR = charging — works now), `1` = ACS712
+  current (`|A| ≥ 0.5` = charging — for when the solar panel is wired in series). Display it
+  with ThingSpeak's built-in Gauge widget (field5).
 - **Current sensing**: `read_current()` reads a real ACS712 20A module (100mV/A) via `AnalogIn` on
   `PA_0`. The module is powered from 5V (zero output = VCC/2 ≈ 2.5V) and its OUT goes straight to
   PA_0 (ADC reads 0-3.3V, which comfortably covers the sensor's 2.5V zero point). 20 samples are
