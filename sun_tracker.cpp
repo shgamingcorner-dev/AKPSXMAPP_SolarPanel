@@ -42,6 +42,10 @@ void sun_tracker_set_epoch(uint64_t epoch_sec)
 {
     g_epoch_sec = epoch_sec;
     g_has_time  = (epoch_sec > 1000000000ULL);   // sane: after 2001
+    // A late time arrival (or a re-fetch) should trigger an IMMEDIATE aim,
+    // not wait for the next 5-min cadence tick. g_last_aim is in ms-since-boot;
+    // backdate it so the next tick's (now - g_last_aim) >= SUN_UPDATE_MS.
+    g_last_aim = now_ms() - SUN_UPDATE_MS;
     if (g_has_time) {
         printf("[SUN] epoch time set: %llu\n", (unsigned long long)g_epoch_sec);
     }
@@ -200,6 +204,7 @@ void sun_tracker_init(void)
     g_pos = 0;
     g_target = SUN_NIGHT_PARK_POS;
     g_has_target = false;
+    g_last_aim = now_ms() - SUN_UPDATE_MS;   // first tick aims immediately
     trackerMotor.period_ms(PERIOD_WIDTH);
     motor_stop();
     printf("[SUN] sun tracker init (mode=%d), lat=%.2f lon=%.2f tz=%+d\n",
