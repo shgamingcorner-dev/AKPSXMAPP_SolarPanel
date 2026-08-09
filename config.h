@@ -176,10 +176,12 @@
 #define SMART_MANUAL_OVERRIDE_MS 60000
 
 // ACS712 20A Current Sensor — powered from 5V (module VCC pin).
-// Zero-current output = VCC/2 = 2.5V. Sensitivity 100mV/A (20A variant).
-// (Was 0.060/1.5 = 30A@3.3V config; wrong for this module -> garbage 15-18A.)
+// Zero-current output = VCC/2 = 2.5V nominal. Sensitivity 100mV/A (20A variant).
+// CALIBRATED 2026-08-09: this module's actual zero measures ~2.6V with the
+// light OFF (module tolerance), not the textbook 2.5V. If you re-zero it,
+// read the sensor output with NO load and update ACS712_ZERO_V.
 #define ACS712_SENSITIVITY_V_PER_A  0.100f
-#define ACS712_ZERO_V               2.5f
+#define ACS712_ZERO_V               2.6f
 #define ADC_VREF                    3.3f
 
 // Network Timeouts
