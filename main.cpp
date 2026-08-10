@@ -535,12 +535,6 @@ static int read_RFID(void)
     if (!mfrc522.PICC_ReadCardSerial())   return 0;
     if (!rfid_readID())                   return 0;
 
-    // Halt the card after a successful read so a card LEFT ON the reader
-    // doesn't re-trigger every loop iteration (PICC_IsNewCardPresent returns
-    // true while the card is still in the field). The card must be removed
-    // and re-presented to trigger again. Fixes Telegram spam from a held card.
-    mfrc522.PICC_HaltA();
-
     if (memcmp(tagID, RFID_UID_CARD, 8) == 0) {
         printf("[RFID] Card matched! UID: %s\n", tagID);
         return 1;
