@@ -85,8 +85,8 @@
 
 // Phase 1: time-driven pulley cycle (exact Arduino sketch timings)
 #define TRACKER_STOP_DUTY      0.075f   // neutral/stop (1500us equivalent)
-#define TRACKER_FWD_DUTY       0.100f   // full speed one direction
-#define TRACKER_REV_DUTY       0.050f   // full speed other direction
+#define TRACKER_FWD_DUTY       0.125f   // full speed one direction (calibrated: fastest smooth)
+#define TRACKER_REV_DUTY       0.050f   // full speed other direction (1.0ms; below 0.050 is <1ms, out of range)
 #define TRACKER_MS_TO_FLAT     2500     // fwd 2.5s -> stop at FLAT (180°)
 #define TRACKER_HOLD_FLAT_MS   30000    // hold flat 30s
 #define TRACKER_MS_FWD_MAX     3000     // fwd 3s -> stop at ~315/135
@@ -160,7 +160,7 @@
 #define SOLAR_TEST_DUTIES        { 0.100f, 0.105f, 0.110f, 0.115f, 0.120f, 0.125f, 0.130f }
 #define SOLAR_TEST_EACH_MS       3000    // how long to run each duty
 #define SOLAR_TEST_PAUSE_MS      1500    // pause between duties
-#define SOLAR_TEST_TRAVEL_MS     12000   // Test 2: max forward run to find travel time
+#define SOLAR_TEST_TRAVEL_MS     20000   // Test 2: max forward run to find travel time
 #define SOLAR_TEST_HOME_MS       3000    // Test 2: reverse-to-home settle time first
 
 // ============================================================

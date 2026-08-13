@@ -79,12 +79,12 @@ void solar_test_run(void)
     // ---- TEST 2: TRAVEL ----
     printf("[TEST] Test 2 TRAVEL: homing reverse %d ms\n", SOLAR_TEST_HOME_MS);
     tracker_test_reset_pos();
-    tracker_test_drive(0.050f);            // reverse (mirror of 0.100 fwd)
+    tracker_test_drive(0.050f);            // reverse (clamped min; mirror of 0.125 would be 0.025 < 1ms)
     thread_sleep_for(SOLAR_TEST_HOME_MS);
     tracker_test_stop();
-    printf("[TEST] Homed. Now driving forward, tick every 1000ms:\n");
+    printf("[TEST] Homed. Now driving forward at TRACKER_FWD_DUTY=%0.3f, tick every 1000ms:\n", (double)TRACKER_FWD_DUTY);
 
-    tracker_test_drive(0.100f);            // forward at current speed
+    tracker_test_drive(TRACKER_FWD_DUTY);  // forward at the FINAL speed
     for (int t = 1000; t <= SOLAR_TEST_TRAVEL_MS; t += 1000) {
         thread_sleep_for(1000);
         printf("[TRAVEL] t=%d ms\n", t);
