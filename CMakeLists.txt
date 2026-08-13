@@ -26,6 +26,7 @@ target_sources(${APP_TARGET}
         lcd_utilities.cpp
         tracker.cpp
         sun_tracker.cpp
+        solar_test.cpp
 )
 
 target_link_libraries(${APP_TARGET}

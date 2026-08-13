@@ -41,4 +41,10 @@ float   tracker_get_best_ldr(void);   // debug: highest LDR seen this sweep
 float   tracker_get_ldr_pct(void);    // current LDR% (0-100, invert applied)
 bool    tracker_is_dark(void);     // true when LDR% < TRACKER_LDR_FLOOR (derived from analog; no DO pin)
 
+// Test hooks (SolarBugFixes calibration): drive/stop the tracker motor
+// directly from solar_test.cpp without touching tracker internals.
+void    tracker_test_drive(float duty);   // run motor at given duty
+void    tracker_test_stop(void);          // stop (neutral)
+void    tracker_test_reset_pos(void);     // zero the position model
+
 #endif // TRACKER_H

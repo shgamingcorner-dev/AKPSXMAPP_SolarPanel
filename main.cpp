@@ -14,6 +14,7 @@
 #include "config.h"
 #include "tracker.h"
 #include "sun_tracker.h"
+#include "solar_test.h"
 
 #define BUF      512
 #define RX_BUF   1024
@@ -1671,6 +1672,14 @@ int main(void)
     tracker_init();
 #if TRACKER_MODE == 1
     sun_tracker_init();
+#endif
+
+#if SOLAR_TEST_MODE == 1
+    // Calibration mode (SolarBugFixes branch): run the speed + travel tests
+    // at boot, then halt. Normal operation resumes with SOLAR_TEST_MODE 0.
+    solar_test_run();
+    printf("[TEST] Halting after calibration. Set SOLAR_TEST_MODE=0 and reflash.\n");
+    while (1) thread_sleep_for(10000);
 #endif
 
     // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.

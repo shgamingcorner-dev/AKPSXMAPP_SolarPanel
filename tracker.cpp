@@ -202,6 +202,27 @@ bool tracker_is_moving(void) { return g_moving; }
 uint8_t tracker_get_phase(void) { return (uint8_t)g_phase; }
 float tracker_get_best_ldr(void) { return g_best_ldr; }
 
+// Test hooks (SolarBugFixes calibration): drive/stop the tracker motor
+// directly from solar_test.cpp.
+void tracker_test_drive(float duty)
+{
+    trackerMotor.period_ms(PERIOD_WIDTH);
+    trackerMotor.write(duty);
+    g_moving = true;
+}
+
+void tracker_test_stop(void)
+{
+    trackerMotor.write(TRACKER_STOP_DUTY);
+    g_moving = false;
+}
+
+void tracker_test_reset_pos(void)
+{
+    g_pos = 0;
+    g_last_pos_update = now_ms();
+}
+
 void tracker_tick(void)
 {
     uint64_t now = now_ms();

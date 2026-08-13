@@ -142,6 +142,25 @@
 #define SUN_MIN_ELEVATION        3.0f    // deg
 
 // ============================================================
+// SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
+// ============================================================
+// Set SOLAR_TEST_MODE 1 to run the motor calibration tests at boot:
+//   Test 1 (SPEED):  sweeps the tracker motor forward at increasing duty
+//                    values, printing each one so you can compare speeds.
+//   Test 2 (TRAVEL): drives forward from home and prints a progress tick
+//                    every 1000ms so you can read off the east->west travel
+//                    time on your pulley rig.
+// After you report the results, set back to 0 for normal operation.
+#define SOLAR_TEST_MODE          1
+// Duties to test in Test 1 (forward). Reverse is mirrored by subtracting
+// from neutral (0.075): rev_duty = 0.150 - fwd_duty.
+#define SOLAR_TEST_DUTIES        { 0.100f, 0.105f, 0.110f, 0.115f, 0.120f, 0.125f }
+#define SOLAR_TEST_EACH_MS       3000    // how long to run each duty
+#define SOLAR_TEST_PAUSE_MS      1500    // pause between duties
+#define SOLAR_TEST_TRAVEL_MS     12000   // Test 2: max forward run to find travel time
+#define SOLAR_TEST_HOME_MS       3000    // Test 2: reverse-to-home settle time first
+
+// ============================================================
 // Simulated solar battery (ThingSpeak field5, 0-100%)
 // ============================================================
 // A virtual battery that charges when "sunlight" is detected and drains
