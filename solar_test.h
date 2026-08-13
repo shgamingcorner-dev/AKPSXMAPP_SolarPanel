@@ -5,8 +5,8 @@
 
 // Solar calibration test mode (SolarBugFixes branch).
 // When SOLAR_TEST_MODE is 1, main() runs solar_test_run() at boot instead
-// of the normal tracker: sweeps the blind servo (PA_7) pulse width
-// 500->2500us to find the real 0°/180° range. See config.h for params.
+// of the normal tracker: (1) positional-180 pulse sweep on PA_7,
+// (2) main light ramp on PB_1, (3) 360 duty scan on PA_1. See config.h.
 
 void solar_test_run(void);
 
