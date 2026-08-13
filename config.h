@@ -85,7 +85,7 @@
 
 // Phase 1: time-driven pulley cycle (exact Arduino sketch timings)
 #define TRACKER_STOP_DUTY      0.075f   // neutral/stop (1500us equivalent)
-#define TRACKER_FWD_DUTY       0.115f   // full speed one direction (user tuning: 0.125->0.115 to test)
+#define TRACKER_FWD_DUTY       0.100f   // full speed one direction (nominal; user testing 0.100)
 #define TRACKER_REV_DUTY       0.050f   // full speed other direction (1.0ms; below 0.050 is <1ms, out of range)
 #define TRACKER_MS_TO_FLAT     2500     // fwd 2.5s -> stop at FLAT (180°)
 #define TRACKER_HOLD_FLAT_MS   30000    // hold flat 30s
@@ -144,22 +144,12 @@
 // ============================================================
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
-// Set SOLAR_TEST_MODE 1 to run the motor calibration tests at boot:
-//   Test 1 (SPEED):  runs the FAN servo (PA_1, 360° continuous) at
-//                    increasing duty values, printing each one so you can
-//                    compare speeds by eye on the fan.
-//   Test 2 (TRAVEL): drives the TRACKER motor (PB_0) forward from home and
+// Set SOLAR_TEST_MODE 1 to run the motor calibration test at boot:
+//   Test (TRAVEL): drives the TRACKER motor (PB_0) forward from home and
 //                    prints a progress tick every 1000ms so you can read off
 //                    the east->west travel time on your pulley rig.
 // After you report the results, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
-// Duties to test in Test 1 (forward). Reverse is mirrored by subtracting
-// from neutral (0.075): rev_duty = 0.150 - fwd_duty.
-// 0.125 (2.5ms pulse) is the SG90-family max; 0.130 is included to CONFIRM
-// there's no more speed beyond it (if 0.130 is the same speed, 0.125 wins).
-#define SOLAR_TEST_DUTIES        { 0.100f, 0.105f, 0.110f, 0.115f, 0.120f, 0.125f, 0.130f }
-#define SOLAR_TEST_EACH_MS       3000    // how long to run each duty
-#define SOLAR_TEST_PAUSE_MS      1500    // pause between duties
 #define SOLAR_TEST_TRAVEL_MS     20000   // Test 2: max forward run to find travel time
 #define SOLAR_TEST_HOME_MS       3000    // Test 2: reverse-to-home settle time first
 

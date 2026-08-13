@@ -3,9 +3,8 @@
 
 // Solar calibration test mode (SolarBugFixes branch).
 // When SOLAR_TEST_MODE is 1, main() runs solar_test_run() at boot instead
-// of the normal tracker, so you can calibrate:
-//   - the fastest reliable servo duty (Test 1: SPEED)
-//   - the real east->west travel time on your pulley (Test 2: TRAVEL)
+// of the normal tracker, so you can calibrate the real east->west travel
+// time on your pulley rig (prints a [TRAVEL] t= tick every 1000ms).
 // See config.h for the tunable parameters.
 
 void solar_test_run(void);
