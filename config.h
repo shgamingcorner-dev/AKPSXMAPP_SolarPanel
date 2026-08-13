@@ -39,13 +39,11 @@
 #define ESP_RX            PC_11
 #define DHT11_PIN         PC_4
 #define CURRENT_SENSOR_PIN PA_0
-#define MAIN_LIGHT_PIN    PB_1      // Main light PWM. PB_1 = TIM3_CH4 DEFAULT
-                                    // remap -- NOT PC_9! PC_9 forces TIM3 full
-                                    // remap which re-routes TIM3_CH2 away from
-                                    // PA_7, silently killing the blind motor.
-                                    // PB_1 keeps ALL TIM3 users on default remap
-                                    // (motor PA_7 CH2, light PB_1 CH4) so every
-                                    // channel actually outputs.
+#define MAIN_LIGHT_PIN    PB_7      // Main light PWM. PB_7 = TIM4_CH2 — moved off TIM3!
+                                     // (was PB_1/TIM3_CH4: period_ms(10) on TIM3 changed the
+                                     // period for the PA_7 blind + PB_0 tracker too — same
+                                     // timer, shared period. TIM4 keeps 100Hz light separate
+                                     // from the 50Hz servos.)
 #define MOTOR_PIN         PA_7
 #define FAN_SERVO_PIN     PA_1
 #define BUZZER_PIN        PB_14     // changed: was PA_2 (PA_2 conflicts with RST_PIN)

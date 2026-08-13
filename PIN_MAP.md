@@ -17,12 +17,13 @@ Updated: 2026-08-08 — **door lock servo (PA_6) removed; keypad '2' is now Smar
 | **PA_4** | LDR analog (bare LDR + divider) | AnalogIn | ADC1_IN4 | 3.3V→LDR→PA_4→10k→GND; bright = high % |
 | **PA_7** | Blind/curtain motor | PwmOut | TIM3_CH2 (default) | SG90, 600µs closed / 2400µs open |
 | **PB_0** | Solar tracker motor | PwmOut | TIM3_CH3 (default) | 360° continuous motor, pulley |
-| **PB_1** | Main light | PwmOut | TIM3_CH4 (default) | 100Hz PWM, brightness 0-100% |
+| **PB_1** | ~~Main light~~ **FREE** | — | TIM3_CH4 (default) | Moved to PB_7/TIM4 — see below |
 | **PB_2** | MFRC522 SS (NSS) | DigitalOut | — | SPI chip select (active low) |
 | **PB_3** | SPI SCK (MFRC522) | SPI | SPI1 | 4MHz |
 | **PB_4** | SPI MISO (MFRC522) | SPI | SPI1 | |
 | **PB_5** | SPI MOSI (MFRC522) | SPI | SPI1 | |
 | **PB_6** | Red LED | DigitalOut | — | RFID no-match indicator |
+| **PB_7** | **Main light** | PwmOut | **TIM4_CH2** | **Moved here from PB_1/TIM3!** 100Hz PWM, brightness 0-100%. TIM4 keeps the light's 10ms period SEPARATE from TIM3 (servos need 20ms — sharing TIM3 with the light's period_ms(10) broke the blind/tracker PWM). |
 | **PB_8** | Keypad D0 | DigitalIn | — | 74C922 data bit 0 |
 | **PB_9** | Keypad D1 | DigitalIn | — | 74C922 data bit 1 |
 | **PB_10** | Keypad D2 | DigitalIn | — | 74C922 data bit 2 |
