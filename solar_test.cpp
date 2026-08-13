@@ -19,11 +19,11 @@
  * times) accordingly.
  */
 #include "solar_test.h"
-#include "config.h"
-#include "tracker.h"
-
 #include "mbed.h"
 #include <cstdio>
+
+#include "config.h"
+#include "tracker.h"
 
 static uint64_t now_ms(void)
 {
