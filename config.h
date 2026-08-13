@@ -143,14 +143,11 @@
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
 // Set SOLAR_TEST_MODE 1 to run the motor test at boot:
-//   Test 1 (BLIND ANGLE STEPS): drives the blind servo (PA_7 / MOTOR_PIN,
+//   Test (BLIND ANGLE STEPS): drives the blind servo (PA_7 / MOTOR_PIN,
 //   SG90 positional) 0 -> 45 -> 90 -> 135 -> 180 -> back to 0 in steps.
-//   Test 2 (CURRENT SENSOR SANITY): reads the ACS712 (PA_0) a few times
-//   to confirm the ADC still works after pin re-arrangements.
 // After you confirm, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
 #define BLIND_TEST_STEP_MS       1500    // hold each angle step
-#define CURRENT_SENSOR_SAMPLES   5       // reads for the sensor sanity check
 
 // ============================================================
 // Simulated solar battery (ThingSpeak field5, 0-100%)

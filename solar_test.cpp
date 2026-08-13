@@ -1,15 +1,11 @@
 /*
- * Blind angle-step test + current-sensor sanity (SolarBugFixes branch).
+ * Blind angle-step test (SolarBugFixes branch).
  *
  * Runs at boot when SOLAR_TEST_MODE == 1:
- *   TEST 1 — BLIND ANGLE STEPS: drives the blind servo (PA_7 / MOTOR_PIN,
+ *   TEST — BLIND ANGLE STEPS: drives the blind servo (PA_7 / MOTOR_PIN,
  *   SG90 positional) through 0° -> 45° -> 90° -> 135° -> 180° -> 135° ->
  *   90° -> 45° -> 0° in BLIND_TEST_STEP_MS increments, printing each angle
  *   and its pulse width so you can verify the servo moves angle-by-angle.
- *
- *   TEST 2 — CURRENT SENSOR SANITY: reads the ACS712 (PA_0 / ADC1_IN0)
- *   several times and prints pin voltage + computed current, proving the
- *   ADC still works after the pin re-arrangements (light moved PB_1->PB_7).
  *
  * SG90 map: 0°=600us, 90°=1500us, 180°=2400us (linear).
  */
@@ -23,10 +19,6 @@
 
 #ifndef BLIND_TEST_STEP_MS
 #define BLIND_TEST_STEP_MS 1500   // hold each angle step
-#endif
-
-#ifndef CURRENT_SENSOR_SAMPLES
-#define CURRENT_SENSOR_SAMPLES 5  // reads for the sensor sanity check
 #endif
 
 static uint64_t now_ms(void)
@@ -66,23 +58,6 @@ void solar_test_run(void)
         thread_sleep_for(BLIND_TEST_STEP_MS);
     }
     printf("[TEST] Blind step test done.\n");
-
-    // ---- TEST 2: CURRENT SENSOR SANITY (PA_0) ----
-    printf("\n=== CURRENT SENSOR SANITY (PA_0 / ADC1_IN0) ===\n");
-    AnalogIn current_sensor(CURRENT_SENSOR_PIN);
-
-    for (int i = 0; i < CURRENT_SENSOR_SAMPLES; i++) {
-        float sum = 0.0f;
-        for (int s = 0; s < 20; s++) {
-            sum += current_sensor.read();
-            thread_sleep_for(1);
-        }
-        float pin_voltage = (sum / 20.0f) * ADC_VREF;
-        float current = (pin_voltage - ACS712_ZERO_V) / ACS712_SENSITIVITY_V_PER_A;
-        printf("[CURR] sample=%d pin=%.2fV current=%.2fA\n", i + 1, (double)pin_voltage, (double)current);
-        thread_sleep_for(200);
-    }
-    printf("[TEST] Current sensor sanity done. Pin should be ~%.1fV (0A).\n", (double)ACS712_ZERO_V);
 
     printf("\n[TEST] All tests complete. Set SOLAR_TEST_MODE=0 and reflash for normal operation.\n");
     thread_sleep_for(2000);
