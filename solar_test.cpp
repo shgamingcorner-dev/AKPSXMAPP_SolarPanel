@@ -1,15 +1,12 @@
 /*
- * Blind servo calibration test (SolarBugFixes branch).
+ * Blind servo on/off test (SolarBugFixes branch).
  *
- * Runs at boot when SOLAR_TEST_MODE == 1. Single test:
+ * Runs at boot when SOLAR_TEST_MODE == 1. Mirrors the real apply_blind()
+ * in main.cpp (PA_7 / MOTOR_PIN):
+ *   OPEN   -> pulsewidth_us(2400)  (PULSE_WIDTH_180_DEGREE)
+ *   CLOSED -> pulsewidth_us(600)   (PULSE_WIDTH_0_DEGREE)
  *
- *   TEST — BLIND SWEEP (positional SG90 on PA_7 / MOTOR_PIN):
- *   steps the blind servo through 0° -> 45° -> 90° -> 0° -> 45°-back ->
- *   90°-back (mapped to pulse widths 600/1050/1500us), holding each for
- *   BLIND_TEST_HOLD_MS and printing [BLIND] pos=... so you can verify the
- *   positional servo reaches each angle correctly.
- *
- * After you confirm the angles, set SOLAR_TEST_MODE back to 0.
+ * Toggles OPEN/CLOSED a few times so you can verify the blind servo moves.
  */
 #include "solar_test.h"
 #include "mbed.h"
@@ -19,11 +16,11 @@
 #include "tracker.h"
 
 #ifndef BLIND_TEST_HOLD_MS
-#define BLIND_TEST_HOLD_MS 2000   // hold each angle
+#define BLIND_TEST_HOLD_MS 2000   // hold each state
 #endif
 
-#ifndef BLIND_TEST_PAUSE_MS
-#define BLIND_TEST_PAUSE_MS 500   // pause between angles
+#ifndef BLIND_TEST_CYCLES
+#define BLIND_TEST_CYCLES 4       // number of OPEN->CLOSED cycles
 #endif
 
 static uint64_t now_ms(void)
@@ -32,55 +29,31 @@ static uint64_t now_ms(void)
     return duration_cast<milliseconds>(Kernel::Clock::now().time_since_epoch()).count();
 }
 
-static void blink_led(int times, int period_ms)
-{
-    DigitalOut led(PB_14);
-    for (int i = 0; i < times; i++) {
-        led = 1;
-        thread_sleep_for(period_ms / 2);
-        led = 0;
-        thread_sleep_for(period_ms / 2);
-    }
-}
-
 void solar_test_run(void)
 {
-    printf("\n=== BLIND SERVO POSITION TEST ===\n");
+    printf("\n=== BLIND SERVO ON/OFF TEST (PA_7) ===\n");
 
     // Stop the tracker motor first (tracker_init() started it).
     tracker_test_stop();
 
-    // The blind servo is a positional SG90 on PA_7 (MOTOR_PIN).
-    // Standard SG90 map: 0°=600us, 90°=1500us, 180°=2400us.
-    // Interpolated: 45° = 1050us.
+    // Same as apply_blind() in main.cpp: PwmOut motor(MOTOR_PIN) on PA_7.
     PwmOut blindMotor(MOTOR_PIN);
     blindMotor.period_ms(PERIOD_WIDTH);   // 50Hz
 
-    // Angle -> pulse width (linear map, SG90: 600us@0° .. 2400us@180°)
-    auto pulse_for = [](int deg) -> int {
-        return 600 + (deg * 10);   // 600 + deg*10us per degree
-    };
+    printf("[TEST] Toggling blind OPEN (2400us) / CLOSED (600us) %d times.\n", BLIND_TEST_CYCLES);
 
-    // Test sequence: 0, 45, 90, 0, -45, -90 (as requested)
-    // For a 0-180° servo, -45/-90 just mean the same positions on return
-    // (the physical mirror = same angles; the servo can't go past 0).
-    const int angles[] = { 0, 45, 90, 0, -45, -90 };
-    const int n = sizeof(angles) / sizeof(angles[0]);
-
-    for (int i = 0; i < n; i++) {
-        int deg = angles[i];
-        // Clamp negative angles to their absolute (positional servo has no
-        // negative side; -45/-90 = 45/90 in the other rotational sense,
-        // which for a single-axis blind is the same physical motion).
-        int use_deg = (deg < 0) ? -deg : deg;
-        int pulse = pulse_for(use_deg);
-        printf("[BLIND] pos=%d deg (%d) -> pulse %d us\n", deg, use_deg, pulse);
-        blindMotor.pulsewidth_us(pulse);
+    for (int i = 0; i < BLIND_TEST_CYCLES; i++) {
+        // OPEN
+        printf("[BLIND] -> OPEN (2400us)\n");
+        blindMotor.pulsewidth_us(PULSE_WIDTH_180_DEGREE);
         thread_sleep_for(BLIND_TEST_HOLD_MS);
-        blink_led(i + 1, 120);   // blink count = which step we're on
-        thread_sleep_for(BLIND_TEST_PAUSE_MS);
+
+        // CLOSED
+        printf("[BLIND] -> CLOSED (600us)\n");
+        blindMotor.pulsewidth_us(PULSE_WIDTH_0_DEGREE);
+        thread_sleep_for(BLIND_TEST_HOLD_MS);
     }
 
-    printf("[TEST] Blind sweep complete. Confirm the angles moved correctly.\n");
-    blink_led(5, 250);
+    printf("[TEST] Blind toggle complete. Confirm it moved OPEN <-> CLOSED.\n");
+    thread_sleep_for(2000);
 }
