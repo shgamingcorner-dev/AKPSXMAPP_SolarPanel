@@ -1,11 +1,14 @@
 /*
- * Blind angle-step test (SolarBugFixes branch).
+ * Blind angle-step + light test (SolarBugFixes branch).
  *
  * Runs at boot when SOLAR_TEST_MODE == 1:
- *   TEST — BLIND ANGLE STEPS: drives the blind servo (PA_7 / MOTOR_PIN,
+ *   TEST 1 — BLIND ANGLE STEPS: drives the blind servo (PA_7 / MOTOR_PIN,
  *   SG90 positional) through 0° -> 45° -> 90° -> 135° -> 180° -> 135° ->
  *   90° -> 45° -> 0° in BLIND_TEST_STEP_MS increments, printing each angle
  *   and its pulse width so you can verify the servo moves angle-by-angle.
+ *
+ *   TEST 2 — MAIN LIGHT: ramps brightness 0->100->0% on PB_7 (TIM4_CH2)
+ *   to verify the light works on its NEW pin (was PB_1/TIM3).
  *
  * SG90 map: 0°=600us, 90°=1500us, 180°=2400us (linear).
  */
@@ -58,6 +61,28 @@ void solar_test_run(void)
         thread_sleep_for(BLIND_TEST_STEP_MS);
     }
     printf("[TEST] Blind step test done.\n");
+
+    // ---- TEST 2: MAIN LIGHT (PB_7 / TIM4_CH2) ----
+    // Verify the light works on its NEW pin (moved from PB_1/TIM3 to
+    // PB_7/TIM4 to avoid the period conflict). Ramps brightness 0->100%
+    // then 100->0 so you can see it work on the new pin.
+    printf("\n=== MAIN LIGHT TEST (PB_7 / TIM4_CH2) ===\n");
+    PwmOut light(MAIN_LIGHT_PIN);
+    light.period_ms(10);   // 100Hz — same as the real set_brightness()
+    for (int i = 0; i <= 10; i++) {
+        float duty = i / 10.0f;
+        light.write(duty);
+        printf("[LIGHT] brightness=%3d%% (duty=%.1f)\n", i * 10, (double)duty);
+        thread_sleep_for(500);
+    }
+    for (int i = 10; i >= 0; i--) {
+        float duty = i / 10.0f;
+        light.write(duty);
+        printf("[LIGHT] brightness=%3d%% (duty=%.1f)\n", i * 10, (double)duty);
+        thread_sleep_for(500);
+    }
+    light.write(0.0f);
+    printf("[TEST] Light test done.\n");
 
     printf("\n[TEST] All tests complete. Set SOLAR_TEST_MODE=0 and reflash for normal operation.\n");
     thread_sleep_for(2000);

@@ -143,8 +143,9 @@
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
 // Set SOLAR_TEST_MODE 1 to run the motor test at boot:
-//   Test (BLIND ANGLE STEPS): drives the blind servo (PA_7 / MOTOR_PIN,
+//   Test 1 (BLIND ANGLE STEPS): drives the blind servo (PA_7 / MOTOR_PIN,
 //   SG90 positional) 0 -> 45 -> 90 -> 135 -> 180 -> back to 0 in steps.
+//   Test 2 (MAIN LIGHT): ramps brightness on PB_7 to verify the new pin.
 // After you confirm, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
 #define BLIND_TEST_STEP_MS       1500    // hold each angle step
