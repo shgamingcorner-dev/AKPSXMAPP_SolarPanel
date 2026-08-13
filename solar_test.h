@@ -3,9 +3,9 @@
 
 // Solar calibration test mode (SolarBugFixes branch).
 // When SOLAR_TEST_MODE is 1, main() runs solar_test_run() at boot instead
-// of the normal tracker: (1) blind ON/OFF toggle like apply_blind(), then
-// (2) a 360° duty scan on the same pin to check whether the blind is a
-// positional SG90 or a continuous 360° servo. See config.h for params.
+// of the normal tracker: (1) blind servo angle-step test on PA_7
+// (0->45->90->135->180->back), then (2) current-sensor sanity on PA_0.
+// See config.h for the tunable parameters.
 
 void solar_test_run(void);
 

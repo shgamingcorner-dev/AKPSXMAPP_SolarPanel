@@ -1,31 +1,32 @@
 /*
- * Blind servo test (SolarBugFixes branch).
+ * Blind angle-step test + current-sensor sanity (SolarBugFixes branch).
  *
- * Runs at boot when SOLAR_TEST_MODE == 1. Two tests on PA_7 (MOTOR_PIN):
+ * Runs at boot when SOLAR_TEST_MODE == 1:
+ *   TEST 1 — BLIND ANGLE STEPS: drives the blind servo (PA_7 / MOTOR_PIN,
+ *   SG90 positional) through 0° -> 45° -> 90° -> 135° -> 180° -> 135° ->
+ *   90° -> 45° -> 0° in BLIND_TEST_STEP_MS increments, printing each angle
+ *   and its pulse width so you can verify the servo moves angle-by-angle.
  *
- *   TEST 1 — BLIND ON/OFF: mirrors apply_blind() in main.cpp
- *     OPEN   -> pulsewidth_us(2400)  (PULSE_WIDTH_180_DEGREE)
- *     CLOSED -> pulsewidth_us(600)   (PULSE_WIDTH_0_DEGREE)
- *     Toggles a few times so you can verify the blind servo moves.
+ *   TEST 2 — CURRENT SENSOR SANITY: reads the ACS712 (PA_0 / ADC1_IN0)
+ *   several times and prints pin voltage + computed current, proving the
+ *   ADC still works after the pin re-arrangements (light moved PB_1->PB_7).
  *
- *   TEST 2 — 360 DUTY SCAN: scans 0.025->0.125 step 0.005 on the same pin.
- *     If the servo SPINS continuously at duties away from neutral, it is a
- *     360° continuous servo (not a positional SG90) — which explains why
- *     the on/off (hold-angle) code does not work.
+ * SG90 map: 0°=600us, 90°=1500us, 180°=2400us (linear).
  */
 #include "solar_test.h"
 #include "mbed.h"
 #include <cstdio>
+#include <cstdlib>
 
 #include "config.h"
 #include "tracker.h"
 
-#ifndef BLIND_TEST_HOLD_MS
-#define BLIND_TEST_HOLD_MS 2000   // hold each state
+#ifndef BLIND_TEST_STEP_MS
+#define BLIND_TEST_STEP_MS 1500   // hold each angle step
 #endif
 
-#ifndef BLIND_TEST_CYCLES
-#define BLIND_TEST_CYCLES 4       // number of OPEN->CLOSED cycles
+#ifndef CURRENT_SENSOR_SAMPLES
+#define CURRENT_SENSOR_SAMPLES 5  // reads for the sensor sanity check
 #endif
 
 static uint64_t now_ms(void)
@@ -34,55 +35,55 @@ static uint64_t now_ms(void)
     return duration_cast<milliseconds>(Kernel::Clock::now().time_since_epoch()).count();
 }
 
+// SG90 linear map: 600us @ 0°, +10us per degree (2400us @ 180°)
+static int pulse_for_angle(int deg)
+{
+    return 600 + deg * 10;
+}
+
 void solar_test_run(void)
 {
-    printf("\n=== BLIND SERVO ON/OFF TEST (PA_7) ===\n");
+    printf("\n=== BLIND ANGLE-STEP + CURRENT SENSOR TEST ===\n");
 
     // Stop the tracker motor first (tracker_init() started it).
     tracker_test_stop();
 
-    // Same as apply_blind() in main.cpp: PwmOut motor(MOTOR_PIN) on PA_7.
+    // ---- TEST 1: BLIND ANGLE STEPS (PA_7) ----
     PwmOut blindMotor(MOTOR_PIN);
     blindMotor.period_ms(PERIOD_WIDTH);   // 50Hz
 
-    printf("[TEST] Toggling blind OPEN (2400us) / CLOSED (600us) %d times.\n", BLIND_TEST_CYCLES);
+    const int angles[] = { 0, 45, 90, 135, 180, 135, 90, 45, 0 };
+    const int n = sizeof(angles) / sizeof(angles[0]);
 
-    for (int i = 0; i < BLIND_TEST_CYCLES; i++) {
-        // OPEN
-        printf("[BLIND] -> OPEN (2400us)\n");
-        blindMotor.pulsewidth_us(PULSE_WIDTH_180_DEGREE);
-        thread_sleep_for(BLIND_TEST_HOLD_MS);
+    printf("[TEST] Blind angle steps on PA_7 (SG90):");
+    for (int i = 0; i < n; i++) printf(" %d", angles[i]);
+    printf(" deg\n");
 
-        // CLOSED
-        printf("[BLIND] -> CLOSED (600us)\n");
-        blindMotor.pulsewidth_us(PULSE_WIDTH_0_DEGREE);
-        thread_sleep_for(BLIND_TEST_HOLD_MS);
+    for (int i = 0; i < n; i++) {
+        int pulse = pulse_for_angle(angles[i]);
+        printf("[BLIND] angle=%3d deg -> pulse %d us\n", angles[i], pulse);
+        blindMotor.pulsewidth_us(pulse);
+        thread_sleep_for(BLIND_TEST_STEP_MS);
     }
+    printf("[TEST] Blind step test done.\n");
 
-    printf("[TEST] Blind toggle complete. Confirm it moved OPEN <-> CLOSED.\n");
-    thread_sleep_for(2000);
+    // ---- TEST 2: CURRENT SENSOR SANITY (PA_0) ----
+    printf("\n=== CURRENT SENSOR SANITY (PA_0 / ADC1_IN0) ===\n");
+    AnalogIn current_sensor(CURRENT_SENSOR_PIN);
 
-    // ---- TEST 2: 360° DUTY SCAN (same pin) ----
-    // If the servo is a 360° continuous one, it will SPIN at duties away
-    // from neutral (0.075) instead of holding an angle. This tells us
-    // whether the blind is positional (SG90) or continuous.
-    printf("\n=== 360 DUTY SCAN (PA_7) ===\n");
-    printf("[TEST] Scanning duty %0.3f -> %0.3f step %0.3f, hold %d ms\n",
-           (double)SOLAR_TEST_DUTY_MIN, (double)SOLAR_TEST_DUTY_MAX,
-           (double)SOLAR_TEST_DUTY_STEP, SOLAR_TEST_DUTY_HOLD_MS);
-    printf("[TEST] If it SPINS continuously -> 360 servo. If it holds angles -> positional.\n");
-
-    int step = 0;
-    for (float d = SOLAR_TEST_DUTY_MIN; d <= SOLAR_TEST_DUTY_MAX + 0.0001f; d += SOLAR_TEST_DUTY_STEP) {
-        step++;
-        printf("[SCAN] duty=%0.3f -- running %d ms\n", (double)d, SOLAR_TEST_DUTY_HOLD_MS);
-        blindMotor.pulsewidth_us((uint16_t)(d * 20000.0f));   // duty -> us (20ms period)
-        thread_sleep_for(SOLAR_TEST_DUTY_HOLD_MS);
-        blindMotor.pulsewidth_us(PULSE_WIDTH_0_DEGREE);       // stop/neutral-ish
-        printf("[SCAN] duty=%0.3f stopped\n", (double)d);
-        thread_sleep_for(SOLAR_TEST_PAUSE_MS);
+    for (int i = 0; i < CURRENT_SENSOR_SAMPLES; i++) {
+        float sum = 0.0f;
+        for (int s = 0; s < 20; s++) {
+            sum += current_sensor.read();
+            thread_sleep_for(1);
+        }
+        float pin_voltage = (sum / 20.0f) * ADC_VREF;
+        float current = (pin_voltage - ACS712_ZERO_V) / ACS712_SENSITIVITY_V_PER_A;
+        printf("[CURR] sample=%d pin=%.2fV current=%.2fA\n", i + 1, (double)pin_voltage, (double)current);
+        thread_sleep_for(200);
     }
+    printf("[TEST] Current sensor sanity done. Pin should be ~%.1fV (0A).\n", (double)ACS712_ZERO_V);
 
-    printf("[TEST] 360 scan complete (%d steps). Positional or continuous?\n", step);
+    printf("\n[TEST] All tests complete. Set SOLAR_TEST_MODE=0 and reflash for normal operation.\n");
     thread_sleep_for(2000);
 }
