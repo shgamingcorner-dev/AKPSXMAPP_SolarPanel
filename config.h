@@ -144,21 +144,14 @@
 // ============================================================
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
-// Set SOLAR_TEST_MODE 1 to run the motor characterization test at boot:
-//   Test (DUTY SCAN): steps the TRACKER motor duty from
-//   SOLAR_TEST_DUTY_MIN to SOLAR_TEST_DUTY_MAX in SOLAR_TEST_DUTY_STEP
-//   increments, running SOLAR_TEST_DUTY_HOLD_MS at each, printing
-//   [SCAN] duty=0.XXX so you can watch the panel and note:
-//     - which duties STOP (dead-zone / neutral)
-//     - which duties move FORWARD
-//     - which duties move REVERSE
-// After you report the results, set back to 0 for normal operation.
+// Set SOLAR_TEST_MODE 1 to run the motor test at boot:
+//   Test (BLIND SWEEP): steps the blind servo (PA_7 / MOTOR_PIN) through
+//   0 -> 45 -> 90 -> 0 -> -45 -> -90 degrees, holding each ~2s and
+//   printing [BLIND] pos=... so you can verify the positional servo.
+// After you confirm, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
-#define SOLAR_TEST_DUTY_MIN      0.025f  // 0.5ms pulse (spec min)
-#define SOLAR_TEST_DUTY_MAX      0.125f  // 2.5ms pulse (spec max)
-#define SOLAR_TEST_DUTY_STEP     0.005f  // 5ms pulse increment between steps
-#define SOLAR_TEST_DUTY_HOLD_MS  1500    // how long to hold each duty
-#define SOLAR_TEST_PAUSE_MS      300     // short pause between steps
+#define BLIND_TEST_HOLD_MS       2000    // hold each angle
+#define BLIND_TEST_PAUSE_MS      500     // pause between angles
 
 // ============================================================
 // Simulated solar battery (ThingSpeak field5, 0-100%)
