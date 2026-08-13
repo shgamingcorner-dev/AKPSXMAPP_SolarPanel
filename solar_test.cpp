@@ -48,6 +48,12 @@ void solar_test_run(void)
 {
     printf("\n=== SOLAR CALIBRATION TEST MODE ===\n");
 
+    // CRITICAL: tracker_init() -> begin_sweep() already started the tracker
+    // motor forward at 0.100 before we got here. Stop it NOW so the panel
+    // doesn't run into the stop during Test 1 and stall (which makes Test 2
+    // look dead because reverse can't un-stall a jammed motor).
+    tracker_test_stop();
+
     // ---- TEST 1: SPEED (FAN SERVO, PA_1) ----
     // The fan servo is a 360° continuous servo on PA_1 — easy to see spin.
     // Same servo family as the tracker motor, so the fastest smooth duty

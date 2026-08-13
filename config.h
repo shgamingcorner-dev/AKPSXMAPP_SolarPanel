@@ -155,7 +155,9 @@
 #define SOLAR_TEST_MODE          1
 // Duties to test in Test 1 (forward). Reverse is mirrored by subtracting
 // from neutral (0.075): rev_duty = 0.150 - fwd_duty.
-#define SOLAR_TEST_DUTIES        { 0.100f, 0.105f, 0.110f, 0.115f, 0.120f, 0.125f }
+// 0.125 (2.5ms pulse) is the SG90-family max; 0.130 is included to CONFIRM
+// there's no more speed beyond it (if 0.130 is the same speed, 0.125 wins).
+#define SOLAR_TEST_DUTIES        { 0.100f, 0.105f, 0.110f, 0.115f, 0.120f, 0.125f, 0.130f }
 #define SOLAR_TEST_EACH_MS       3000    // how long to run each duty
 #define SOLAR_TEST_PAUSE_MS      1500    // pause between duties
 #define SOLAR_TEST_TRAVEL_MS     12000   // Test 2: max forward run to find travel time
