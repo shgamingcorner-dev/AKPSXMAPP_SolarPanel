@@ -145,12 +145,22 @@
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
 // Set SOLAR_TEST_MODE 1 to run the motor test at boot:
-//   Test (BLIND ON/OFF): toggles the blind servo (PA_7 / MOTOR_PIN) between
-//   OPEN (2400us) and CLOSED (600us) — same as apply_blind() in main.cpp —
-//   so you can verify the blind moves. After you confirm, set back to 0.
+//   Test 1 (BLIND ON/OFF): toggles the blind servo (PA_7 / MOTOR_PIN)
+//   between OPEN (2400us) and CLOSED (600us) — same as apply_blind() in
+//   main.cpp — so you can verify the blind moves.
+//   Test 2 (360 DUTY SCAN): scans the same pin from SOLAR_TEST_DUTY_MIN
+//   to SOLAR_TEST_DUTY_MAX in SOLAR_TEST_DUTY_STEP steps. If the servo is
+//   actually a 360° continuous one, it will SPIN continuously at duties
+//   away from neutral (0.075) instead of holding an angle.
+// After you confirm, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
 #define BLIND_TEST_HOLD_MS       2000    // hold each state
 #define BLIND_TEST_CYCLES        4       // number of OPEN->CLOSED cycles
+#define SOLAR_TEST_DUTY_MIN      0.025f  // 0.5ms pulse (spec min)
+#define SOLAR_TEST_DUTY_MAX      0.125f  // 2.5ms pulse (spec max)
+#define SOLAR_TEST_DUTY_STEP     0.005f  // 5ms pulse increment between steps
+#define SOLAR_TEST_DUTY_HOLD_MS  1500    // how long to hold each duty
+#define SOLAR_TEST_PAUSE_MS      300     // short pause between steps
 
 // ============================================================
 // Simulated solar battery (ThingSpeak field5, 0-100%)
