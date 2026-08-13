@@ -145,11 +145,12 @@
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
 // Set SOLAR_TEST_MODE 1 to run the motor calibration tests at boot:
-//   Test 1 (SPEED):  sweeps the tracker motor forward at increasing duty
-//                    values, printing each one so you can compare speeds.
-//   Test 2 (TRAVEL): drives forward from home and prints a progress tick
-//                    every 1000ms so you can read off the east->west travel
-//                    time on your pulley rig.
+//   Test 1 (SPEED):  runs the FAN servo (PA_1, 360° continuous) at
+//                    increasing duty values, printing each one so you can
+//                    compare speeds by eye on the fan.
+//   Test 2 (TRAVEL): drives the TRACKER motor (PB_0) forward from home and
+//                    prints a progress tick every 1000ms so you can read off
+//                    the east->west travel time on your pulley rig.
 // After you report the results, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
 // Duties to test in Test 1 (forward). Reverse is mirrored by subtracting
