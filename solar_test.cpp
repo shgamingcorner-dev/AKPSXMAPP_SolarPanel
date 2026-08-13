@@ -33,7 +33,7 @@ static uint64_t now_ms(void)
 
 static void blink_led(int times, int period_ms)
 {
-    DigitalOut led(PA_5);   // NUCLEO green LED
+    DigitalOut led(PB_14);   // PB_14 LED (led_tx pin; unused during test since network thread doesn't start)
     for (int i = 0; i < times; i++) {
         led = 1;
         thread_sleep_for(period_ms / 2);
