@@ -7,7 +7,7 @@
  *   90° -> 45° -> 0° in BLIND_TEST_STEP_MS increments, printing each angle
  *   and its pulse width so you can verify the servo moves angle-by-angle.
  *
- *   TEST 2 — MAIN LIGHT: ramps brightness 0->100->0% on PB_7 (TIM4_CH2)
+ *   TEST 2 — MAIN LIGHT: ramps brightness 0->100->0% on PB_1 (TIM3_CH4)
  *   to verify the light works on its NEW pin (was PB_1/TIM3).
  *
  * SG90 map: 0°=600us, 90°=1500us, 180°=2400us (linear).
@@ -62,12 +62,12 @@ void solar_test_run(void)
     }
     printf("[TEST] Blind step test done.\n");
 
-    // ---- TEST 2: MAIN LIGHT (PB_7 / TIM4_CH2) ----
-    // Verify the light works on its NEW pin (moved from PB_1/TIM3 to
-    // PB_7/TIM4 to avoid the period conflict). Uses the REAL production
+    // ---- TEST 2: MAIN LIGHT (PB_1 / TIM3_CH4) ----
+    // Verify the light works (back on PB_1 — PB_7 is NOT in the F103 pinmap,
+    // causing error 0x80010130 at boot). Uses the REAL production
     // led_mainLighting_pwm via main_light_test_set() in main.cpp — the
-    // period was initialized in main() before solar_test_run().
-    printf("\n=== MAIN LIGHT TEST (PB_7 / TIM4_CH2) ===\n");
+    // 20ms period was initialized in main() before solar_test_run().
+    printf("\n=== MAIN LIGHT TEST (PB_1 / TIM3_CH4) ===\n");
     for (int i = 0; i <= 10; i++) {
         main_light_test_set(i * 10);
         thread_sleep_for(500);

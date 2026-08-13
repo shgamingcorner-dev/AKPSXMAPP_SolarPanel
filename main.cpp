@@ -247,7 +247,7 @@ static uint8_t get_brightness(void)
 }
 
 // Test hook (SolarBugFixes): drives the REAL production light path
-// (led_mainLighting_pwm on MAIN_LIGHT_PIN PB_7/TIM4) so the calibration
+// (led_mainLighting_pwm on MAIN_LIGHT_PIN PB_1/TIM3) so the calibration
 // test can verify the actual hardware wiring. Only compiled in test mode.
 #if SOLAR_TEST_MODE == 1
 void main_light_test_set(uint8_t brightness)
@@ -1686,12 +1686,12 @@ int main(void)
     sun_tracker_init();
 #endif
 
-    // Main light PWM init on PB_7 (TIM4_CH2): 100Hz, full brightness.
-    // Moved from PB_1 (TIM3_CH4): period_ms(10) on TIM3 changed the shared
-    // timer period for the PA_7 blind + PB_0 tracker (both need 20ms).
-    // Initialized BEFORE solar_test_run() so the calibration test can drive
-    // the REAL light path (led_mainLighting_pwm) via main_light_test_set().
-    led_mainLighting_pwm.period_ms(10);
+    // Main light PWM init on PB_1 (TIM3_CH4): 50Hz (20ms) — same period as
+    // the PA_7 blind + PB_0 tracker servos (TIM3 shares one period across
+    // all channels). 50Hz PWM dims the LED fine; 100Hz is NOT possible on
+    // TIM3 without breaking the servos. Initialized BEFORE solar_test_run()
+    // so the calibration test can drive the real light path.
+    led_mainLighting_pwm.period_ms(PERIOD_WIDTH);   // 20ms, matches servos
     led_mainLighting_pwm.write(1.0f);
     g_brightness = 100;
 
