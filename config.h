@@ -85,7 +85,7 @@
 
 // Phase 1: time-driven pulley cycle (exact Arduino sketch timings)
 #define TRACKER_STOP_DUTY      0.075f   // neutral/stop (1500us equivalent)
-#define TRACKER_FWD_DUTY       0.125f   // full speed one direction (SG90 max 2.5ms pulse; fastest smooth)
+#define TRACKER_FWD_DUTY       0.100f   // full speed one direction (nominal 2.0ms pulse, safe/controllable)
 #define TRACKER_REV_DUTY       0.050f   // full speed other direction (1.0ms; below 0.050 is <1ms, out of range)
 #define TRACKER_MS_TO_FLAT     2500     // fwd 2.5s -> stop at FLAT (180°)
 #define TRACKER_HOLD_FLAT_MS   30000    // hold flat 30s

@@ -3,12 +3,12 @@
  *
  * Runs at boot when SOLAR_TEST_MODE == 1. Single test:
  *
- *   TEST — TRAVEL (TRACKER motor, PB_0): forward to a known home for
- *   SOLAR_TEST_HOME_MS, then drive the tracker motor REVERSE at
- *   TRACKER_REV_DUTY and print a progress tick every 1000ms up to
+ *   TEST — TRAVEL (TRACKER motor, PB_0): reverse to a known home for
+ *   SOLAR_TEST_HOME_MS, then drive the tracker motor FORWARD at
+ *   TRACKER_FWD_DUTY and print a progress tick every 1000ms up to
  *   SOLAR_TEST_TRAVEL_MS. Watch the panel: the tick number where it hits
- *   the far mechanical stop is the reverse travel time in ms
- *   (calibrates the return direction for SUN_POS_* mapping).
+ *   the far mechanical stop is the forward travel time in ms
+ *   (calibrates the main direction for SUN_POS_* mapping).
  *
  * After you report the result, set SOLAR_TEST_MODE back to 0 and update
  * SUN_POS_WEST (and the LDR sweep times) accordingly.
@@ -47,15 +47,15 @@ void solar_test_run(void)
     // because reverse can't un-stall a jammed motor).
     tracker_test_stop();
 
-    // ---- TEST: TRAVEL (reverse direction) ----
-    printf("[TEST] TRAVEL: homing FORWARD %d ms\n", SOLAR_TEST_HOME_MS);
+    // ---- TEST: TRAVEL (forward direction) ----
+    printf("[TEST] TRAVEL: homing REVERSE %d ms\n", SOLAR_TEST_HOME_MS);
     tracker_test_reset_pos();
-    tracker_test_drive(TRACKER_FWD_DUTY);   // forward to home/settle
+    tracker_test_drive(TRACKER_REV_DUTY);   // reverse to home/settle
     thread_sleep_for(SOLAR_TEST_HOME_MS);
     tracker_test_stop();
-    printf("[TEST] Homed. Now driving REVERSE at TRACKER_REV_DUTY=%0.3f, tick every 1000ms:\n", (double)TRACKER_REV_DUTY);
+    printf("[TEST] Homed. Now driving FORWARD at TRACKER_FWD_DUTY=%0.3f, tick every 1000ms:\n", (double)TRACKER_FWD_DUTY);
 
-    tracker_test_drive(TRACKER_REV_DUTY);   // reverse (measure the other direction)
+    tracker_test_drive(TRACKER_FWD_DUTY);   // forward (measure the main direction)
     for (int t = 1000; t <= SOLAR_TEST_TRAVEL_MS; t += 1000) {
         thread_sleep_for(1000);
         printf("[TRAVEL] t=%d ms\n", t);
