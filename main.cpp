@@ -246,6 +246,18 @@ static uint8_t get_brightness(void)
     return b;
 }
 
+// Test hook (SolarBugFixes): drives the REAL production light path
+// (led_mainLighting_pwm on MAIN_LIGHT_PIN PB_7/TIM4) so the calibration
+// test can verify the actual hardware wiring. Only compiled in test mode.
+#if SOLAR_TEST_MODE == 1
+void main_light_test_set(uint8_t brightness)
+{
+    if (brightness > 100) brightness = 100;
+    led_mainLighting_pwm.write((float)brightness / 100.0f);
+    printf("[LIGHT] brightness=%3d%%\n", brightness);
+}
+#endif
+
 static void set_main_lighting(bool on)
 {
     if (on) {
@@ -1674,19 +1686,22 @@ int main(void)
     sun_tracker_init();
 #endif
 
+    // Main light PWM init on PB_7 (TIM4_CH2): 100Hz, full brightness.
+    // Moved from PB_1 (TIM3_CH4): period_ms(10) on TIM3 changed the shared
+    // timer period for the PA_7 blind + PB_0 tracker (both need 20ms).
+    // Initialized BEFORE solar_test_run() so the calibration test can drive
+    // the REAL light path (led_mainLighting_pwm) via main_light_test_set().
+    led_mainLighting_pwm.period_ms(10);
+    led_mainLighting_pwm.write(1.0f);
+    g_brightness = 100;
+
 #if SOLAR_TEST_MODE == 1
-    // Calibration mode (SolarBugFixes branch): run the speed + travel tests
-    // at boot, then halt. Normal operation resumes with SOLAR_TEST_MODE 0.
+    // Calibration mode (SolarBugFixes branch): run the tests at boot,
+    // then halt. Normal operation resumes with SOLAR_TEST_MODE 0.
     solar_test_run();
     printf("[TEST] Halting after calibration. Set SOLAR_TEST_MODE=0 and reflash.\n");
     while (1) thread_sleep_for(10000);
 #endif
-
-    // Main light PWM init on PB_1 (TIM3_CH4, default remap): 100Hz, full brightness.
-    // NOT PC_9: PC_9's full remap reroutes TIM3_CH2 away from the PA_7 blind motor.
-    led_mainLighting_pwm.period_ms(10);
-    led_mainLighting_pwm.write(1.0f);
-    g_brightness = 100;
 
     lcd_init();
     keypad_init();

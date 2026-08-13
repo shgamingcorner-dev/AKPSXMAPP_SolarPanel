@@ -64,24 +64,19 @@ void solar_test_run(void)
 
     // ---- TEST 2: MAIN LIGHT (PB_7 / TIM4_CH2) ----
     // Verify the light works on its NEW pin (moved from PB_1/TIM3 to
-    // PB_7/TIM4 to avoid the period conflict). Ramps brightness 0->100%
-    // then 100->0 so you can see it work on the new pin.
+    // PB_7/TIM4 to avoid the period conflict). Uses the REAL production
+    // led_mainLighting_pwm via main_light_test_set() in main.cpp — the
+    // period was initialized in main() before solar_test_run().
     printf("\n=== MAIN LIGHT TEST (PB_7 / TIM4_CH2) ===\n");
-    PwmOut light(MAIN_LIGHT_PIN);
-    light.period_ms(10);   // 100Hz — same as the real set_brightness()
     for (int i = 0; i <= 10; i++) {
-        float duty = i / 10.0f;
-        light.write(duty);
-        printf("[LIGHT] brightness=%3d%% (duty=%.1f)\n", i * 10, (double)duty);
+        main_light_test_set(i * 10);
         thread_sleep_for(500);
     }
     for (int i = 10; i >= 0; i--) {
-        float duty = i / 10.0f;
-        light.write(duty);
-        printf("[LIGHT] brightness=%3d%% (duty=%.1f)\n", i * 10, (double)duty);
+        main_light_test_set(i * 10);
         thread_sleep_for(500);
     }
-    light.write(0.0f);
+    main_light_test_set(0);
     printf("[TEST] Light test done.\n");
 
     printf("\n[TEST] All tests complete. Set SOLAR_TEST_MODE=0 and reflash for normal operation.\n");
