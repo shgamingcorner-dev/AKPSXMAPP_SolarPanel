@@ -144,14 +144,21 @@
 // ============================================================
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
-// Set SOLAR_TEST_MODE 1 to run the motor calibration test at boot:
-//   Test (TRAVEL): drives the TRACKER motor (PB_0) forward from home and
-//                    prints a progress tick every 1000ms so you can read off
-//                    the east->west travel time on your pulley rig.
+// Set SOLAR_TEST_MODE 1 to run the motor characterization test at boot:
+//   Test (DUTY SCAN): steps the TRACKER motor duty from
+//   SOLAR_TEST_DUTY_MIN to SOLAR_TEST_DUTY_MAX in SOLAR_TEST_DUTY_STEP
+//   increments, running SOLAR_TEST_DUTY_HOLD_MS at each, printing
+//   [SCAN] duty=0.XXX so you can watch the panel and note:
+//     - which duties STOP (dead-zone / neutral)
+//     - which duties move FORWARD
+//     - which duties move REVERSE
 // After you report the results, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
-#define SOLAR_TEST_TRAVEL_MS     20000   // Test 2: max forward run to find travel time
-#define SOLAR_TEST_HOME_MS       3000    // Test 2: reverse-to-home settle time first
+#define SOLAR_TEST_DUTY_MIN      0.030f  // start of scan (below neutral)
+#define SOLAR_TEST_DUTY_MAX      0.120f  // end of scan (above neutral)
+#define SOLAR_TEST_DUTY_STEP     0.005f  // 5ms pulse increment between steps
+#define SOLAR_TEST_DUTY_HOLD_MS  1500    // how long to hold each duty
+#define SOLAR_TEST_PAUSE_MS      300     // short pause between steps
 
 // ============================================================
 // Simulated solar battery (ThingSpeak field5, 0-100%)

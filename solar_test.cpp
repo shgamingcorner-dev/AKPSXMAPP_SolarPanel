@@ -3,15 +3,19 @@
  *
  * Runs at boot when SOLAR_TEST_MODE == 1. Single test:
  *
- *   TEST — TRAVEL (TRACKER motor, PB_0): reverse to a known home for
- *   SOLAR_TEST_HOME_MS, then drive the tracker motor FORWARD at
- *   TRACKER_FWD_DUTY and print a progress tick every 1000ms up to
- *   SOLAR_TEST_TRAVEL_MS. Watch the panel: the tick number where it hits
- *   the far mechanical stop is the forward travel time in ms
- *   (calibrates the main direction for SUN_POS_* mapping).
+ *   TEST — DUTY SCAN (TRACKER motor, PB_0): steps the duty from
+ *   SOLAR_TEST_DUTY_MIN to SOLAR_TEST_DUTY_MAX in SOLAR_TEST_DUTY_STEP
+ *   increments, holding SOLAR_TEST_DUTY_HOLD_MS at each and printing
+ *   [SCAN] duty=0.XXX. Watch the panel and note which duties:
+ *     - STOP (dead-zone / neutral — no motion)
+ *     - move FORWARD
+ *     - move REVERSE
  *
- * After you report the result, set SOLAR_TEST_MODE back to 0 and update
- * SUN_POS_WEST (and the LDR sweep times) accordingly.
+ * This tells us the servo's usable range: the neutral dead-zone and the
+ * minimum duty that reliably moves it each direction.
+ *
+ * After you report the results, set SOLAR_TEST_MODE back to 0 and update
+ * TRACKER_FWD_DUTY / TRACKER_REV_DUTY / TRACKER_STOP_DUTY accordingly.
  */
 #include "solar_test.h"
 #include "mbed.h"
@@ -39,30 +43,29 @@ static void blink_led(int times, int period_ms)
 
 void solar_test_run(void)
 {
-    printf("\n=== SOLAR CALIBRATION TEST MODE ===\n");
+    printf("\n=== SOLAR DUTY CHARACTERIZATION TEST ===\n");
 
     // CRITICAL: tracker_init() -> begin_sweep() already started the tracker
-    // motor forward before we got here. Stop it NOW so the panel doesn't
-    // run into the stop and stall (which makes the travel test look dead
-    // because reverse can't un-stall a jammed motor).
+    // motor forward before we got here. Stop it NOW.
     tracker_test_stop();
 
-    // ---- TEST: TRAVEL (forward direction) ----
-    printf("[TEST] TRAVEL: homing REVERSE %d ms\n", SOLAR_TEST_HOME_MS);
-    tracker_test_reset_pos();
-    tracker_test_drive(TRACKER_REV_DUTY);   // reverse to home/settle
-    thread_sleep_for(SOLAR_TEST_HOME_MS);
-    tracker_test_stop();
-    printf("[TEST] Homed. Now driving FORWARD at TRACKER_FWD_DUTY=%0.3f, tick every 1000ms:\n", (double)TRACKER_FWD_DUTY);
+    printf("[TEST] Scanning duty %0.3f -> %0.3f step %0.3f, hold %d ms\n",
+           (double)SOLAR_TEST_DUTY_MIN, (double)SOLAR_TEST_DUTY_MAX,
+           (double)SOLAR_TEST_DUTY_STEP, SOLAR_TEST_DUTY_HOLD_MS);
+    printf("[TEST] Watch the panel. Note: STOP / FORWARD / REVERSE at each duty.\n");
 
-    tracker_test_drive(TRACKER_FWD_DUTY);   // forward (measure the main direction)
-    for (int t = 1000; t <= SOLAR_TEST_TRAVEL_MS; t += 1000) {
-        thread_sleep_for(1000);
-        printf("[TRAVEL] t=%d ms\n", t);
+    int step = 0;
+    for (float d = SOLAR_TEST_DUTY_MIN; d <= SOLAR_TEST_DUTY_MAX + 0.0001f; d += SOLAR_TEST_DUTY_STEP) {
+        step++;
+        printf("[SCAN] duty=%0.3f -- running %d ms\n", (double)d, SOLAR_TEST_DUTY_HOLD_MS);
+        tracker_test_drive(d);
+        thread_sleep_for(SOLAR_TEST_DUTY_HOLD_MS);
+        tracker_test_stop();
+        printf("[SCAN] duty=%0.3f stopped\n", (double)d);
+        blink_led(step, 100);   // blink 'step' times (fast) so you can count which duty
+        thread_sleep_for(SOLAR_TEST_PAUSE_MS);
     }
-    tracker_test_stop();
-    printf("[TEST] TRAVEL done. Report the t= value where the panel hit the far stop.\n");
 
-    printf("[TEST] All calibration tests complete. Reflash with SOLAR_TEST_MODE=0 for normal operation.\n");
+    printf("[TEST] Scan complete (%d steps). Report which duties STOP / FORWARD / REVERSE.\n", step);
     blink_led(5, 250);
 }
