@@ -2,7 +2,8 @@
     "target_overrides": {
         "*": {
             "rtos.main-thread-stack-size": 4096,
-            "platform.minimal-printf-enable-floating-point": true
+            "platform.minimal-printf-enable-floating-point": true,
+            "target.clock_source": "USE_PLL_HSE_XTAL"
         }
     }
 }
