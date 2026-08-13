@@ -143,18 +143,14 @@
 // SOLAR CALIBRATION TEST MODE (SolarBugFixes branch)
 // ============================================================
 // Set SOLAR_TEST_MODE 1 to run the motor test at boot:
-//   Test 1 (BLIND ANGLE STEPS): drives the blind servo (PA_7 / MOTOR_PIN,
-//   SG90 positional) 0 -> 45 -> 90 -> 135 -> 180 -> back to 0 in steps.
-//   Test 2 (MAIN LIGHT): ramps brightness on PB_1 (same 20ms period as servos).
-//   Test 3 (360 DUTY SCAN): scans PA_7 duty to check if it's a 360 servo.
-// After you confirm, set back to 0 for normal operation.
+//   Test (POSITIONAL 180 SWEEP): sweeps the blind servo (PA_7 / MOTOR_PIN)
+//   pulse width 500->2500us in 100us steps so you can find the real 0°/180°
+//   pulse widths for this positional servo. After you confirm, set to 0.
 #define SOLAR_TEST_MODE          1
-#define BLIND_TEST_STEP_MS       1500    // hold each angle step
-#define SOLAR_TEST_DUTY_MIN      0.025f  // 0.5ms pulse (spec min)
-#define SOLAR_TEST_DUTY_MAX      0.125f  // 2.5ms pulse (spec max)
-#define SOLAR_TEST_DUTY_STEP     0.005f  // 5ms pulse increment between steps
-#define SOLAR_TEST_DUTY_HOLD_MS  1500    // how long to hold each duty
-#define SOLAR_TEST_PAUSE_MS      300     // short pause between steps
+#define SOLAR_SERVO_PULSE_MIN    500     // start pulse (us)
+#define SOLAR_SERVO_PULSE_MAX    2500    // end pulse (us)
+#define SOLAR_SERVO_PULSE_STEP   100     // increment (us)
+#define SOLAR_SERVO_PULSE_HOLD_MS 1200   // hold each pulse
 
 // ============================================================
 // Simulated solar battery (ThingSpeak field5, 0-100%)
