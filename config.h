@@ -155,8 +155,8 @@
 // After you report the results, set back to 0 for normal operation.
 #define SOLAR_TEST_MODE          1
 #define SOLAR_TEST_DUTY_MIN      0.000f  // start of scan (below neutral)
-#define SOLAR_TEST_DUTY_MAX      0.400f  // end of scan (wide range, testing other motor)
-#define SOLAR_TEST_DUTY_STEP     0.050f  // 50ms pulse increment between steps
+#define SOLAR_TEST_DUTY_MAX      0.040f  // end of scan (fine range)
+#define SOLAR_TEST_DUTY_STEP     0.005f  // 5ms pulse increment between steps
 #define SOLAR_TEST_DUTY_HOLD_MS  1500    // how long to hold each duty
 #define SOLAR_TEST_PAUSE_MS      300     // short pause between steps
 
