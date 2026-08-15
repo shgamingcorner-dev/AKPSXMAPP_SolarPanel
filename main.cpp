@@ -603,7 +603,6 @@ static float motor_init(void)
     motor.period_ms(PERIOD_WIDTH);
     motor.pulsewidth_us(PULSE_WIDTH_0_DEGREE);
     printf("[MOTOR] Initialized to %dus (CLOSED/0°)\n", PULSE_WIDTH_0_DEGREE);
-    thread_sleep_for(WAIT_TIME_MS_0);
     return 0.0f;
 }
 
