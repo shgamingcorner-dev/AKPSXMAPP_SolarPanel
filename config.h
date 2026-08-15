@@ -6,8 +6,8 @@
 // ============================================================
 
 // WiFi
-#define WIFI_SSID        "SINGTEL-AE6C"
-#define WIFI_PASSWORD    "97874001lim"
+#define WIFI_SSID        "akps"
+#define WIFI_PASSWORD    "12345678"
 
 //Thinkspeak api key
 #define TS_API_KEY       "WFQQ2K9I14E30IE3"
