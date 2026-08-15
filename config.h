@@ -103,6 +103,11 @@
 #define TRACKER_LDR_FLOOR       5.0f    // below this = dark/night -> park at home
 #define TRACKER_HOLD_BEST_MS    900000  // hold best-LDR angle 15 minutes
 
+// Boot park: the tracker motor stays STOPPED for this long after boot
+// (no sweep, no movement) so the board doesn't jerk on every flash.
+// After the delay the normal LDR sweep-and-hold cycle begins.
+#define TRACKER_BOOT_PARK_MS    10000
+
 // ============================================================
 // Sun Tracker mode (astronomical, time + location based)
 // ============================================================

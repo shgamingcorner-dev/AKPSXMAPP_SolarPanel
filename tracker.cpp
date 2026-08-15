@@ -61,6 +61,7 @@ enum TrkPhase {
 static TrkPhase g_phase = TRK_SWEEP_FWD_TO_FLAT;
 static uint64_t g_phase_start = 0;
 static bool     g_moving = false;
+static uint64_t g_boot_park_until = 0;   // parked at boot until this time (ms)
 
 // LDR sampling + best-angle tracking
 static float   g_best_ldr = 0.0f;        // highest LDR reading this sweep
@@ -194,8 +195,13 @@ void tracker_init(void)
 {
     g_pos = 0;                          // start the model at home
     trackerMotor.period_ms(PERIOD_WIDTH);   // 50Hz, same as fan/blind servos
-    begin_sweep();
+    motor_stop();                       // stay parked at boot — no sweep yet
+    g_phase = TRK_SWEEP_HOLD_HOME;
+    g_phase_start = now_ms();
+    g_last_pos_update = g_phase_start;
+    g_boot_park_until = now_ms() + TRACKER_BOOT_PARK_MS;
     printf("[TRK] tracker init: 360 motor PB_0 + LDR PA_4, LDR sweep-and-hold\n");
+    printf("[TRK] parked at boot — first sweep in %d ms\n", TRACKER_BOOT_PARK_MS);
 }
 
 bool tracker_is_moving(void) { return g_moving; }
@@ -205,6 +211,19 @@ float tracker_get_best_ldr(void) { return g_best_ldr; }
 void tracker_tick(void)
 {
     uint64_t now = now_ms();
+
+    // Boot park: motor stays stopped for TRACKER_BOOT_PARK_MS after boot
+    // so the board doesn't jerk/sweep immediately on every flash.
+    if (g_boot_park_until > 0 && now < g_boot_park_until) {
+        return;
+    }
+    if (g_boot_park_until > 0) {
+        g_boot_park_until = 0;
+        printf("[TRK] boot park over — starting first sweep\n");
+        begin_sweep();
+        return;
+    }
+
     uint64_t elapsed = now - g_phase_start;
 
     switch (g_phase) {
